@@ -11,11 +11,18 @@ window.RAVELLA = {
   // Paste your Web3Forms access key here (see README.md).
   // While this is empty the forms still work and hand off to WhatsApp,
   // but nothing is emailed to Gmail.
-  web3formsKey: "",
+  web3formsKey: "1f79f6e0-06c9-4e81-ac59-6ff71c1fe288",
 
   // Tracking: paste your IDs between the quotes. Leave empty to switch off.
   ga4Id: "",         // GA4 Measurement ID, looks like "G-XXXXXXXXXX"
   metaPixelId: "",   // Meta Pixel ID, a number like "1234567890123456"
+
+  // Company account. All payments go here, before WhatsApp.
+  bank: {
+    accountName: "RAVELLA ULTRA SOLUTION",
+    accountNumber: "1028701744",
+    bankName: "UBA"
+  },
 
   currency: "₦",
   retailPerBottle: 20000,

@@ -104,6 +104,18 @@
           }
           break;
 
+        case "payment_view":
+          ga("view_payment_details", { currency: CUR, value: money(d), funnel: d.track, package: d.package, reference: d.reference });
+          pxc("ViewPaymentDetails", { content_name: d.package, value: money(d), currency: CUR });
+          break;
+
+        case "payment_claimed":
+          // Customer says they've paid. Not yet verified against the UBA statement.
+          ga("add_payment_info", { currency: CUR, value: money(d), payment_type: "bank_transfer", items: [item(d)] });
+          ga("payment_claimed", { currency: CUR, value: money(d), funnel: d.track, package: d.package, reference: d.reference });
+          px("AddPaymentInfo", { content_name: d.package, content_category: d.track, value: money(d), currency: CUR }, { eventID: d.reference + "-pay" });
+          break;
+
         case "whatsapp_click":
           ga("whatsapp_click", { funnel: d.track, package: d.package, value: money(d), currency: CUR, reference: d.reference });
           px("Contact", { content_name: d.package, content_category: d.track, value: money(d), currency: CUR }, { eventID: d.reference + "-wa" });

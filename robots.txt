@@ -19,4 +19,4 @@ Allow: /
 User-agent: Applebot-Extended
 Allow: /
 
-Sitemap: https://YOUR-USERNAME.github.io/ravella-ultra/sitemap.xml
+Sitemap: https://ravella-ultra.github.io/sitemap.xml

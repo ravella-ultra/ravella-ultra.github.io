@@ -10,24 +10,32 @@ A static landing page for Ravella Ultra Solution Organic Wine, ready for GitHub 
 
 ## How the order flow works
 
-Every order goes through the form. There are no direct WhatsApp links on the page.
+Customers pay to the company account **before** they reach WhatsApp, for both regular orders and distributor packages.
 
-1. A visitor taps any order button: a retail package, a distributor package, the top bar, the sticky bar or "Ask us for help".
-   Buttons with no package attached open the form on **"Not sure yet, help me choose"**.
-2. The form has these steps:
-   - **Step 1:** package (or not sure yet), name, WhatsApp number, city and state
-   - **Step 2:** 4 questions (who it's for, used before, when needed, where they heard about us), plus an adult/suitability tick box
-   - **Step 3 (distributors only):** username, email, address, bank name, account number and account name
-3. On submit, every answer is sent to your Gmail through Web3Forms.
-4. The visitor gets a **Send my order on WhatsApp** button with a prefilled message and reference number. Bank details are never put in the WhatsApp message.
+1. A visitor taps any order button. Buttons with no package attached default to 1 bottle.
+2. They fill in the form:
+   - **Step 1:** package, name, WhatsApp number, city and state
+   - **Step 2:** 4 questions, plus the adult/suitability tick box
+   - **Step 3 (distributors only):** the registration details
+3. They tap **Submit and pay**. You get an email titled **"New order (awaiting payment)"**, which lets you follow up with people who don't pay.
+4. The page shows the **company account** (RAVELLA ULTRA SOLUTION, UBA, 1028701744), the exact amount, and their reference to use as the narration. Each detail has a Copy button.
+5. The **"Yes, I have made the payment"** button stays locked until they enter the name and bank they paid from and an amount at least equal to the total, and tick the confirmation box.
+6. You get a second email titled **"Payment claimed: ₦… from …"**. Check it against your UBA statement.
+7. Only then does the **"Send proof of payment on WhatsApp"** button appear. Their message arrives with the reference, amount, payer name and bank, and asks them to attach the receipt.
 
-Customers pay before dispatch. The page tells them you'll confirm the total and send payment details on WhatsApp.
+Regular orders pay for the bottles only, and you confirm delivery after payment. Distributor packages have no delivery fee, so the amount shown is the full price.
+
+If someone leaves for their bank app and the page reloads, a **"Finish payment"** bar brings them back to the account details for the same order.
+
+Change the account details in `assets/js/config.js` under `bank`.
+
+**Limitation:** a static page can't read your UBA account, so the payment check relies on what customers type plus the receipt they send on WhatsApp. Always match the "Payment claimed" email against your statement before dispatching. For automatic confirmation later, add Paystack or Flutterwave. Settlement can still go to the same UBA account.
 
 ## 1. Connect Web3Forms (2 minutes)
 
 1. Go to <https://web3forms.com>, enter the Gmail address that should receive orders, and click **Create Access Key**.
 2. Copy the access key from the email Web3Forms sends you.
-3. Open `assets/js/config.js` and paste it into `web3formsKey: ""`.
+3. The key is already set in `assets/js/config.js` (`web3formsKey`). Change it there if you ever create a new one.
 4. Submit a test order on the live site and check your Gmail. Look in Spam the first time, then mark the email as "Not spam".
 
 Notes:
@@ -38,10 +46,10 @@ Notes:
 
 ## 2. Put the site on GitHub Pages
 
-1. Create a new public repository on GitHub, for example `ravella-ultra`.
+1. On the GitHub account or organisation **ravella-ultra**, create a public repository named exactly **`ravella-ultra.github.io`**. That name is what puts the site at https://ravella-ultra.github.io/.
 2. Upload everything in this folder to the root of the repository, including the hidden `.nojekyll` file.
 3. Go to **Settings → Pages**. Under **Source**, choose **Deploy from a branch**, then `main` and `/ (root)`. Save.
-4. After a minute or two the site is live at `https://YOUR-USERNAME.github.io/ravella-ultra/`.
+4. After a minute or two the site is live at https://ravella-ultra.github.io/.
 
 ## 3. Connect GA4 and Meta Pixel
 
@@ -66,7 +74,9 @@ That's all you need to do. `assets/js/analytics.js` loads both tags and sends th
 | Switches to the distributor price | `switch_to_distributor` | `SwitchToDistributor` (custom) |
 | Submits a retail order | `generate_lead` | `Lead` |
 | Submits a distributor registration | `sign_up` + `generate_lead` | `CompleteRegistration` + `Lead` |
-| Taps the WhatsApp button | `whatsapp_click` | `Contact` |
+| Sees the company account details | `view_payment_details` | `ViewPaymentDetails` (custom) |
+| Taps "Yes, I have made the payment" | `add_payment_info` + `payment_claimed` | `AddPaymentInfo` |
+| Taps "Send proof of payment on WhatsApp" | `whatsapp_click` | `Contact` |
 | Scrolls 25/50/75/100% | `scroll_depth` | — |
 | Reaches a section | `section_view` (section name) | `ViewDistributorSection` (custom, distributor only) |
 
@@ -74,11 +84,11 @@ Every event carries the package name, number of bottles, value in **NGN** and, a
 
 ### After adding the IDs
 
-1. **GA4 key events:** in GA4, go to **Admin → Events** and mark `generate_lead`, `sign_up` and `whatsapp_click` as key events. Events only appear there after they've fired once.
+1. **GA4 key events:** in GA4, go to **Admin → Events** and mark `generate_lead`, `payment_claimed` and `whatsapp_click` as key events. Events only appear there after they've fired once.
 2. **GA4 custom dimensions:** under **Admin → Custom definitions**, add event-scoped dimensions for `package`, `lead_type` and `funnel`, so you can break results down by package.
-3. **Meta ads:** optimise retail campaigns for **Lead**, and distributor campaigns for **CompleteRegistration**.
+3. **Meta ads:** optimise for **AddPaymentInfo** (people who say they've paid) once you have about 50 a week. Until then, use **Lead**. Don't use Purchase, because payments aren't verified automatically.
 4. **Meta domain:** in Business Settings, verify your domain under **Brand safety → Domains**. If you use a GitHub Pages address, verify the github.io subdomain or add a custom domain.
-5. **Test:** open your site with `?debug_tracking=1` at the end of the address, for example `https://YOUR-USERNAME.github.io/ravella-ultra/?debug_tracking=1`. Every event is printed in the browser console and shows in **GA4 → Admin → DebugView**. For the Pixel, use **Test events** in Events Manager or the Meta Pixel Helper Chrome extension.
+5. **Test:** open your site with `?debug_tracking=1` at the end of the address, for example `https://ravella-ultra.github.io/?debug_tracking=1`. Every event is printed in the browser console and shows in **GA4 → Admin → DebugView**. For the Pixel, use **Test events** in Events Manager or the Meta Pixel Helper Chrome extension.
 
 ### Using Google Tag Manager instead
 
@@ -101,7 +111,6 @@ The page is set up so Google, Bing, ChatGPT, Perplexity, Claude and Gemini can r
 
 After publishing:
 
-1. In `robots.txt` and `sitemap.xml`, replace `YOUR-USERNAME.github.io/ravella-ultra` with your real site address.
 2. Add the site to **Google Search Console** and **Bing Webmaster Tools**, and submit `sitemap.xml` to both. Bing's index feeds ChatGPT search and Copilot.
 3. When prices change, update `config.js`, the "At a glance" table, the price FAQ, `llms.txt` and the "Page last updated" date together, so AI answers stay accurate.
 4. List the page on your Google Business Profile, Facebook page and Instagram bio. AI tools trust products that are mentioned consistently in several places.
