@@ -15,7 +15,7 @@ window.RAVELLA = {
 
   // Tracking: paste your IDs between the quotes. Leave empty to switch off.
   ga4Id: "",         // GA4 Measurement ID, looks like "G-XXXXXXXXXX"
-  metaPixelId: "",   // Meta Pixel ID, a number like "1234567890123456"
+  metaPixelId: "1670272394670316",   // Meta Pixel ID, a number like "1234567890123456"
 
   // Company account. All payments go here, before WhatsApp.
   bank: {
