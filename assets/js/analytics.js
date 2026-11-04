@@ -9,6 +9,9 @@
   var C = window.RAVELLA || {};
   var GA = (C.ga4Id || "").trim();
   var PX = (C.metaPixelId || "").trim();
+  // If the Meta Pixel base code is already in <head>, use it and don't load it a second time
+  var PX_IN_HEAD = typeof window.fbq === "function";
+  if (PX_IN_HEAD && !PX) PX = "head";
   var DEBUG = /[?&]debug_tracking=1/.test(location.search);
   var log = function () { if (DEBUG) console.log.apply(console, ["%c[track]", "color:#3E8A55;font-weight:bold"].concat([].slice.call(arguments))); };
 
@@ -25,7 +28,7 @@
   }
 
   /* ---------- Load Meta Pixel ---------- */
-  if (PX) {
+  if (PX && !PX_IN_HEAD) {
     /* eslint-disable */
     !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
     n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
