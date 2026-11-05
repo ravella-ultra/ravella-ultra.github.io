@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Young+Serif&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/style.css?v=20261105b">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261105c">
 
   <script type="application/ld+json">
 {
@@ -725,10 +725,8 @@
     <fieldset class="step" data-step="1">
       <legend class="sr">Package and contact details</legend>
 
-      <div class="seg" role="radiogroup" aria-label="How do you want to buy?">
-        <label><input type="radio" name="track" value="retail" checked><span>Regular price<small>₦20,000 / bottle, from 2 bottles</small></span></label>
-        <label><input type="radio" name="track" value="distributor"><span>Distributor<small>₦15,000 / bottle, from 4 bottles</small></span></label>
-      </div>
+      <!-- Which form this is: "retail" (regular order) or "distributor" (sign-up). Set by the button that opened it. -->
+      <input type="hidden" name="track" value="retail">
 
       <div class="field" data-show="retail">
         <label for="fQty">Number of bottles</label>
@@ -748,15 +746,13 @@
         <label for="fPhone">WhatsApp number</label>
         <input id="fPhone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0803 000 0000" required>
       </div>
-      <div class="row2">
-        <div class="field">
-          <label for="fCity">City or town</label>
-          <input id="fCity" name="city" autocomplete="address-level2" required>
-        </div>
-        <div class="field">
-          <label for="fState">State</label>
-          <select id="fState" name="state" required><option value="">Choose…</option></select>
-        </div>
+      <div class="field">
+        <label for="fAddr">Address</label>
+        <input id="fAddr" name="address" autocomplete="street-address" placeholder="House number, street, area, city" required>
+      </div>
+      <div class="field">
+        <label for="fState">State</label>
+        <select id="fState" name="state" required><option value="">Choose…</option></select>
       </div>
     </fieldset>
 
@@ -808,7 +804,7 @@
     <!-- STEP 3: distributor registration -->
     <fieldset class="step" data-step="3" hidden>
       <legend class="sr">Distributor registration</legend>
-      <p class="muted small">We already have your name, number, city and state from step 1.</p>
+      <p class="muted small">We already have your name, WhatsApp number, address and state from step 1.</p>
       <div class="row2">
         <div class="field">
           <label for="rUser">Username</label>
@@ -819,9 +815,12 @@
           <input id="rEmail" name="email" type="email" autocomplete="email" required>
         </div>
       </div>
-      <div class="field">
-        <label for="rAddr">Address</label>
-        <input id="rAddr" name="address" autocomplete="street-address" required>
+      <div class="q">
+        <p class="q__t" id="genderl">Gender</p>
+        <div class="opts" role="radiogroup" aria-labelledby="genderl">
+          <label><input type="radio" name="gender" value="Male" required><span>Male</span></label>
+          <label><input type="radio" name="gender" value="Female"><span>Female</span></label>
+        </div>
       </div>
       <div class="field">
         <label for="rBank">Bank name</label>
@@ -898,8 +897,8 @@
   </form>
 </dialog>
 
-<script src="assets/js/config.js?v=20261105b"></script>
-<script src="assets/js/analytics.js?v=20261105b"></script>
-<script src="assets/js/main.js?v=20261105b"></script>
+<script src="assets/js/config.js?v=20261105c"></script>
+<script src="assets/js/analytics.js?v=20261105c"></script>
+<script src="assets/js/main.js?v=20261105c"></script>
 </body>
 </html>

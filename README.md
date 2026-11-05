@@ -13,14 +13,13 @@ A static landing page for Ravella Ultra Solution Organic Wine, ready for GitHub 
 Customers pay to the company account **before** they reach WhatsApp, for both regular orders and distributor packages.
 
 1. A visitor taps any order button. Buttons with no package attached default to 1 bottle.
-2. They fill in the form:
-   - **Step 1:** package, name, WhatsApp number, city and state
-   - **Step 2:** 4 questions, plus the adult/suitability tick box
-   - **Step 3 (distributors only):** the registration details
-3. They tap **Submit and pay**. You get an email titled **"New order (awaiting payment)"**, which lets you follow up with people who don't pay.
+2. They fill in one of two separate forms:
+   - **Regular order** (any "Order" button): package, name, WhatsApp number, address and state, then the 4 questions with the adult/suitability tick box
+   - **Distributor sign-up** (any distributor button): package, name, WhatsApp number, address and state, then username, email, gender and bank details. There are no qualification questions.
+3. They tap **Submit and pay**. Nothing is emailed yet.
 4. The page shows the **company account** (RAVELLA ULTRA SOLUTION, UBA, 1028701744), the exact amount, and their reference to use as the narration. Each detail has a Copy button.
 5. The **"Yes, I have made the payment"** button stays locked until they enter the name and bank they paid from and an amount at least equal to the total, and tick the confirmation box.
-6. You get a second email titled **"Payment claimed: ₦… from …"**. Check it against your UBA statement.
+6. You get **one** email containing everything, titled **"PAID order: …"** or **"PAID distributor registration: …"**. Check it against your UBA statement.
 7. Only then does the **"Send proof of payment on WhatsApp"** button appear. Their message arrives with the reference, amount, payer name and bank, and asks them to attach the receipt.
 
 Regular orders pay for the bottles only, and you confirm delivery after payment. Distributor packages have no delivery fee, so the amount shown is the full price.
@@ -71,7 +70,6 @@ That's all you need to do. `assets/js/analytics.js` loads both tags and sends th
 | Opens the form (retail) | `begin_checkout` | `InitiateCheckout` |
 | Opens the form (distributor) | `begin_distributor_signup` | `DistributorSignupStart` (custom) |
 | Moves to the next form step | `form_step` | `FormStep` (custom) |
-| Switches to the distributor price | `switch_to_distributor` | `SwitchToDistributor` (custom) |
 | Submits a retail order | `generate_lead` | `Lead` |
 | Submits a distributor registration | `sign_up` + `generate_lead` | `CompleteRegistration` + `Lead` |
 | Sees the company account details | `view_payment_details` | `ViewPaymentDetails` (custom) |

@@ -123,7 +123,8 @@
   var step = 1, ref = "", order = null;   // order = saved details once the form is submitted
   var B = C.bank;
   function mode() { return form.track.value; }
-  function stepsFor() { return (mode() === "distributor" ? [1, 2, 3] : [1, 2]).concat(["pay"]); }
+  // Two separate forms: regular orders get the 4 questions; distributor sign-ups skip them and go to registration
+  function stepsFor() { return (mode() === "distributor" ? [1, 3] : [1, 2]).concat(["pay"]); }
 
   function summary() {
     if (mode() === "distributor") {
@@ -131,24 +132,21 @@
       return "<b>" + p.name + " package</b>: " + bottles(p.bottles) + " for <b>" + fmt(p.price) + "</b>, no delivery fee.";
     }
     var q = +fQty.value;
-    return "<b>" + retailLabel(q) + "</b>: " + retailPrice(q) + ", plus delivery. <a href='#' id='switchDist'>Pay " + fmt(C.distributorPerBottle) + " a bottle instead</a>";
+    return "<b>" + retailLabel(q) + "</b>: " + retailPrice(q) + ", plus delivery.";
   }
   function refresh() {
     var m = mode();
     $$("[data-show]", form).forEach(function (el) { el.hidden = el.dataset.show !== m; });
     $("#fSummary").innerHTML = summary();
-    var sw = $("#switchDist");
-    if (sw) sw.addEventListener("click", function (e) { e.preventDefault(); setTrack("distributor"); track("switch_to_distributor"); });
     renderStep();
   }
   function setTrack(t) {
     form.track.value = t;
-    $$("input[name=track]", form).forEach(function (r) { r.checked = r.value === t; });
     if (t === "distributor" && !fPack.value) fPack.value = C.distributor[0].id;
     refresh();
   }
 
-  var TITLES = { 1: "Your order", 2: "4 quick questions", 3: "Distributor registration", pay: "Make your payment" };
+  var TITLES = { 1: "Your order", 2: "4 quick questions", 3: "Registration details", pay: "Make your payment" };
   function renderStep() {
     var list = stepsFor();
     $$(".step", form).forEach(function (s) { s.hidden = s.dataset.step !== String(step); });
@@ -164,7 +162,7 @@
     foot.hidden = false;
     var idx = list.indexOf(step);
     $("#mStep").textContent = "Step " + (idx + 1) + " of " + list.length;
-    $("#mTitle").textContent = TITLES[step];
+    $("#mTitle").textContent = step === 1 && mode() === "distributor" ? "Distributor sign-up" : TITLES[step];
     $("#mBar").style.width = ((idx + 1) / (list.length + 0.5) * 100) + "%";
     $("#mBack").hidden = idx === 0 || step === "pay";
     if (step === "pay") { next.textContent = "Yes, I have made the payment"; checkPay(); return; }
@@ -196,7 +194,6 @@
   $$("[data-close]", form).forEach(function (b) { b.addEventListener("click", closeModal); });
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   modal.addEventListener("cancel", function () { setTimeout(showResume, 0); });
-  $$("input[name=track]", form).forEach(function (r) { r.addEventListener("change", function () { setTrack(r.value); }); });
   fQty.addEventListener("change", refresh);
   fPack.addEventListener("change", refresh);
 
@@ -237,6 +234,8 @@
     var q = e.target.closest(".q"); if (q) q.classList.remove("is-bad");
     var c = e.target.closest(".check"); if (c) c.classList.remove("is-bad");
     if (step === "pay") checkPay();
+    var cur = $(".step[data-step='" + step + "']", form);
+    if (cur && !$(".is-bad", cur)) $("#formErr").hidden = true;
   });
   form.addEventListener("change", function () { if (step === "pay") checkPay(); });
 
@@ -270,9 +269,7 @@
       status: "Awaiting payment",
       reference: ref,
       submitted_at: new Date().toISOString(),
-      full_name: val("full_name"), phone: val("phone"), city: val("city"), state: val("state"),
-      q_for: val("q_for"), q_used_before: val("q_used"), q_when: val("q_when"), q_source: val("q_source"),
-      adult_confirm: form.adult_confirm.checked ? "yes" : "no",
+      full_name: val("full_name"), phone: val("phone"), address: val("address"), state: val("state"),
       page_url: location.href.split("#")[0]
     };
     if (dist) {
@@ -280,13 +277,15 @@
       Object.assign(d, {
         track: "distributor", pack_id: p.id,
         package: p.name + " (" + bottles(p.bottles) + ")", bottles: p.bottles, price: p.price,
-        username: val("username"), email: val("email"), address: val("address"),
+        username: val("username"), email: val("email"), gender: val("gender"),
         bank_name: val("bank_name"), account_number: val("account_number"), account_name: val("account_name"),
         data_consent: form.data_consent.checked ? "yes" : "no"
       });
     } else {
       var q = +fQty.value, r = retail(q);
-      Object.assign(d, { track: "retail", package: retailLabel(q), bottles: q, price: r && r.price ? r.price : 0 });
+      Object.assign(d, { track: "retail", package: retailLabel(q), bottles: q, price: r && r.price ? r.price : 0,
+        q_for: val("q_for"), q_used_before: val("q_used"), q_when: val("q_when"), q_source: val("q_source"),
+        adult_confirm: form.adult_confirm.checked ? "yes" : "no" });
     }
     return Object.assign(d, utm);
   }
@@ -333,7 +332,6 @@
     form.reset();
     if (o.track === "distributor") fPack.value = o.pack_id; else fQty.value = o.bottles;
     form.track.value = o.track;
-    $$("input[name=track]", form).forEach(function (x) { x.checked = x.value === o.track; });
     $$("[data-show]", form).forEach(function (el) { el.hidden = el.dataset.show !== o.track; });
     fillPay(); step = "pay"; renderStep(); showModal();
   }
@@ -344,7 +342,7 @@
     // Nothing is emailed yet. All details are kept and sent once, together with the payment confirmation.
     var d = payload();
     order = { reference: ref, track: d.track, pack_id: d.pack_id, package: d.package, bottles: d.bottles, price: d.price,
-      full_name: d.full_name, phone: d.phone, city: d.city, state: d.state, username: d.username || "", email: d.email || "",
+      full_name: d.full_name, phone: d.phone, address: d.address, state: d.state, username: d.username || "", email: d.email || "",
       details: d };
     save();
     track("form_submit", orderInfo());
@@ -400,7 +398,7 @@
       "Paid from: " + p.name + " (" + p.bank + ")",
       "Paid to: " + B.accountName + ", " + B.bankName + " " + B.accountNumber,
       "Name: " + o.full_name + (dist && o.username ? " (username: " + o.username + ")" : ""),
-      (dist ? "Location: " : "Delivery to: ") + o.city + ", " + o.state,
+      (dist ? "Address: " : "Delivery to: ") + o.address + ", " + o.state,
       "",
       "I've attached my proof of payment. " + (dist
         ? "Please confirm my payment and complete my distributor registration. Please also send me the distributor terms."
@@ -423,7 +421,7 @@
     }, utm);
     delete d.details;
     send(d, (dist ? "PAID distributor registration: " : "PAID order: ") + order.package + " | " + fmt(p.amount) + " from " + p.name + " (" + p.bank + ") | " +
-      order.full_name + ", " + order.city + " [" + order.reference + "]")
+      order.full_name + ", " + order.state + " [" + order.reference + "]")
       .then(function () {
         track("payment_claimed", Object.assign(orderInfo(), { amount_paid: p.amount }));
         $("#doneTitle").textContent = "Thanks, " + order.full_name.split(" ")[0] + ". One last step.";
