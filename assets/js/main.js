@@ -340,20 +340,17 @@
   /* ---------- Step: submit order, then show account ---------- */
   function submitOrder() {
     ref = (mode() === "distributor" ? "RD-" : "RU-") + Date.now().toString(36).toUpperCase().slice(-6);
-    var btn = $("#mNext"); btn.disabled = true; btn.textContent = "Saving…";
+    // Nothing is emailed yet. All details are kept and sent once, together with the payment confirmation.
     var d = payload();
-    var dist = d.track === "distributor";
-    send(d, (dist ? "New distributor registration (awaiting payment): " : "New order (awaiting payment): ") + d.package + " | " + fmt(d.price) + " | " + d.full_name + " | " + d.city + ", " + d.state + " [" + ref + "]")
-      .then(function () {
-        order = { reference: ref, track: d.track, pack_id: d.pack_id, package: d.package, bottles: d.bottles, price: d.price,
-          full_name: d.full_name, phone: d.phone, city: d.city, state: d.state, username: d.username || "", email: d.email || "" };
-        save();
-        track("form_submit", orderInfo());
-        fillPay();
-        step = "pay"; renderStep();
-        track("payment_view", orderInfo());
-        var top = $(".pay"); if (top) modal.scrollTop = 0;
-      });
+    order = { reference: ref, track: d.track, pack_id: d.pack_id, package: d.package, bottles: d.bottles, price: d.price,
+      full_name: d.full_name, phone: d.phone, city: d.city, state: d.state, username: d.username || "", email: d.email || "",
+      details: d };
+    save();
+    track("form_submit", orderInfo());
+    fillPay();
+    step = "pay"; renderStep();
+    track("payment_view", orderInfo());
+    modal.scrollTop = 0;
   }
 
   function fillPay() {
@@ -415,17 +412,19 @@
     if (!checkPay()) return;
     var p = { name: val("payer_name"), bank: val("payer_bank"), amount: amountOf(val("payer_amount")) };
     var btn = $("#mNext"); btn.disabled = true; btn.textContent = "Saving…";
-    var d = Object.assign({}, order, {
-      form_type: "Payment claimed",
+    var dist = order.track === "distributor";
+    var d = Object.assign({}, order.details || order, {
+      form_type: dist ? "Distributor registration (paid)" : "Retail order (paid)",
       status: "Customer says paid, check UBA statement",
       payer_name: p.name, payer_bank: p.bank, amount_paid: p.amount, amount_due: order.price,
       paid_to: B.accountName + ", " + B.bankName + " " + B.accountNumber,
       claimed_at: new Date().toISOString()
     }, utm);
-    send(d, "Payment claimed: " + fmt(p.amount) + " from " + p.name + " (" + p.bank + ") | " + order.package + " [" + order.reference + "]")
+    delete d.details;
+    send(d, (dist ? "PAID distributor registration: " : "PAID order: ") + order.package + " | " + fmt(p.amount) + " from " + p.name + " (" + p.bank + ") | " +
+      order.full_name + ", " + order.city + " [" + order.reference + "]")
       .then(function () {
         track("payment_claimed", Object.assign(orderInfo(), { amount_paid: p.amount }));
-        var dist = order.track === "distributor";
         $("#doneTitle").textContent = "Thanks, " + order.full_name.split(" ")[0] + ". One last step.";
         $("#doneText").textContent = dist
           ? "Send your proof of payment on WhatsApp. Once we confirm the payment, we'll complete your distributor registration."
