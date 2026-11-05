@@ -44,7 +44,8 @@
   var img = $("#pickImg"), out = $("#qtyOut"), orderBtn = $("#pickOrder");
   var chipsWrap = $("#qtyChips");
   var MAXQ = Math.max.apply(null, C.retail.filter(function (r) { return r.price; }).map(function (r) { return r.qty; }));
-  [1, 2, 4, 6, 9, 12].filter(function (n) { return n <= MAXQ; }).forEach(function (n) {
+  var MINQ = Math.min.apply(null, C.retail.filter(function (r) { return r.price; }).map(function (r) { return r.qty; }));
+  [2, 4, 6, 9, 10, 12].filter(function (n) { return n >= MINQ && n <= MAXQ; }).forEach(function (n) {
     var b = document.createElement("button");
     b.type = "button"; b.textContent = bottles(n); b.dataset.q = n;
     b.addEventListener("click", function () { setQty(n); track("package_select", pickInfo(n)); });
@@ -52,13 +53,13 @@
   });
   function imgFor(n) { return "assets/img/ravella-ultra-" + n + "-bottle" + (n > 1 ? "s" : "") + ".jpg"; }
   // preload
-  for (var i = 1; i <= MAXQ; i++) { var p = new Image(); p.src = imgFor(i); }
+  for (var i = MINQ; i <= MAXQ; i++) { var p = new Image(); p.src = imgFor(i); }
 
   function setQty(n) {
-    qty = Math.max(1, Math.min(MAXQ, n));
+    qty = Math.max(MINQ, Math.min(MAXQ, n));
     var r = retail(qty);
     out.textContent = qty;
-    $("#qtyMinus").disabled = qty === 1;
+    $("#qtyMinus").disabled = qty === MINQ;
     $("#qtyPlus").disabled = qty === MAXQ;
     img.classList.add("swap");
     setTimeout(function () { img.src = imgFor(qty); img.alt = bottles(qty) + " of Ravella Ultra"; img.classList.remove("swap"); }, 120);
@@ -99,7 +100,7 @@
     dp.appendChild(d);
   });
 
-  setQty(1);
+  setQty(MINQ);
 
   /* ---------- Sticky mobile bar ---------- */
   var sticky = $("#stickybar"), hero = $(".hero"), dist = $("#distributor");
@@ -176,7 +177,7 @@
     step = 1; order = null;
     form.reset();
     $$(".is-bad", form).forEach(function (e) { e.classList.remove("is-bad"); });
-    fQty.value = opts.qty && +opts.qty > 0 ? opts.qty : "1";
+    fQty.value = opts.qty && +opts.qty >= MINQ ? opts.qty : String(MINQ);
     fPack.value = opts.pack || C.distributor[0].id;
     setTrack(opts.track === "distributor" ? "distributor" : "retail");
     showModal();

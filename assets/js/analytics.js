@@ -66,8 +66,8 @@
 
       switch (event) {
         case "view_item":
-          ga("view_item", { currency: CUR, value: C.retailPerBottle, items: [{ item_id: "retail-1", item_name: "Ravella Ultra 750ml - 1 bottle", item_brand: "Ravella Ultra", price: C.retailPerBottle, quantity: 1 }] });
-          px("ViewContent", { content_name: "Ravella Ultra Solution Organic Wine 750ml", content_ids: ["ravella-ultra-750ml"], content_type: "product", value: C.retailPerBottle, currency: CUR });
+          ga("view_item", { currency: CUR, value: C.retailPerBottle * 2, items: [{ item_id: "retail-2", item_name: "Ravella Ultra 750ml - 2 bottles (Ruby Package)", item_brand: "Ravella Ultra", price: C.retailPerBottle * 2, quantity: 1 }] });
+          px("ViewContent", { content_name: "Ravella Ultra Solution Organic Wine 750ml", content_ids: ["ravella-ultra-750ml"], content_type: "product", value: C.retailPerBottle * 2, currency: CUR });
           break;
 
         case "package_select":

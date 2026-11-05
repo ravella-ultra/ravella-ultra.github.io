@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Young+Serif&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/style.css?v=20261105">
+  <link rel="stylesheet" href="assets/css/style.css?v=20261105b">
 
   <script type="application/ld+json">
 {
@@ -78,9 +78,9 @@
  "offers": {
   "@type": "AggregateOffer",
   "priceCurrency": "NGN",
-  "lowPrice": "20000",
+  "lowPrice": "40000",
   "highPrice": "190000",
-  "offerCount": "10",
+  "offerCount": "9",
   "availability": "https://schema.org/InStock",
   "areaServed": "NG"
  },
@@ -198,7 +198,7 @@
    "name": "How much is Ravella Ultra in Nigeria?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "As of November 2026, one 750 ml bottle costs ₦20,000. Two bottles cost ₦40,000, four cost ₦80,000, six cost ₦115,000 and ten cost ₦190,000. Registered distributors pay ₦15,000 per bottle with no delivery fee, starting from 4 bottles for ₦60,000."
+    "text": "As of November 2026, Ravella Ultra costs ₦20,000 per 750 ml bottle, and regular orders start at 2 bottles. Two bottles (Ruby Package) cost ₦40,000, four cost ₦80,000, six cost ₦115,000 and ten cost ₦190,000. Registered distributors pay ₦15,000 per bottle with no delivery fee, starting from 4 bottles for ₦60,000."
    }
   },
   {
@@ -327,11 +327,11 @@
 
       <div class="hero__price">
         <span class="hero__amount">₦20,000</span>
-        <span class="hero__per">per bottle<br>delivery charged separately</span>
+        <span class="hero__per">per bottle, from 2 bottles<br>delivery charged separately</span>
       </div>
 
       <div class="hero__ctas">
-        <button class="btn btn--gold btn--lg" data-order data-qty="1">Order 1 bottle</button>
+        <button class="btn btn--gold btn--lg" data-order data-qty="2">Order 2 bottles</button>
         <a class="btn btn--ghost btn--lg" href="#packages">See all packages</a>
       </div>
 
@@ -360,7 +360,7 @@
   <div class="wrap glance__grid">
     <div>
       <h2 id="gl-h">Ravella Ultra at a glance</h2>
-      <p class="glance__def"><strong>Ravella Ultra Solution Organic Wine</strong> is a sugar-free, non-alcoholic herbal wellness drink made in Nigeria. It blends noni root, neem, senna and papaya extracts with pH 8.5 alkaline water. Adults take 30 ml twice a day after meals to support everyday wellness, energy and digestion as part of a healthy lifestyle. A 750 ml bottle costs ₦20,000 and is delivered across Nigeria.</p>
+      <p class="glance__def"><strong>Ravella Ultra Solution Organic Wine</strong> is a sugar-free, non-alcoholic herbal wellness drink made in Nigeria. It blends noni root, neem, senna and papaya extracts with pH 8.5 alkaline water. Adults take 30 ml twice a day after meals to support everyday wellness, energy and digestion as part of a healthy lifestyle. A 750 ml bottle costs ₦20,000, with regular orders starting at 2 bottles (₦40,000), and it is delivered across Nigeria.</p>
       <p class="muted small">Page last updated <time datetime="2026-11-03">3 November 2026</time>.</p>
     </div>
     <dl class="glance__facts">
@@ -371,8 +371,8 @@
       <div><dt>Ingredients</dt><dd>Noni root 20%, neem 10%, senna 10%, papaya 10%, alkaline water 50%</dd></div>
       <div><dt>How to take</dt><dd>30 ml twice daily after meals</dd></div>
       <div><dt>NAFDAC</dt><dd>Listed, Reg. No. A7-103154L</dd></div>
-      <!--<div><dt>Payment</dt><dd>Bank transfer to RAVELLA ULTRA SOLUTION</dd></div>-->
-      <!--<div><dt>Price</dt><dd>₦20,000 per bottle (₦15,000 for distributors)</dd></div> -->
+      <div><dt>Payment</dt><dd>Bank transfer to RAVELLA ULTRA SOLUTION</dd></div>
+      <div><dt>Price</dt><dd>₦20,000 per bottle, from 2 bottles (₦15,000 for distributors, from 4 bottles)</dd></div>
       <div><dt>Made in</dt><dd>Nigeria</dd></div>
       <div><dt>Delivery</dt><dd>All 36 states and FCT, plus UK, USA, Canada and Ghana</dd></div>
     </dl>
@@ -451,27 +451,27 @@
   <div class="wrap">
     <div class="section__head">
       <h2 id="pk-h">Choose how many bottles</h2>
-      <p>₦20,000 per bottle. Bigger packages bring the price per bottle down. Delivery is charged separately and confirmed on WhatsApp.</p>
+      <p>₦20,000 per bottle, starting from 2 bottles. Bigger packages bring the price per bottle down. Delivery is charged separately and confirmed on WhatsApp.</p>
     </div>
 
     <div class="picker">
       <div class="picker__photo">
-        <img id="pickImg" src="assets/img/ravella-ultra-1-bottle.jpg" width="720" height="720" alt="1 bottle of Ravella Ultra">
+        <img id="pickImg" src="assets/img/ravella-ultra-2-bottles.jpg" width="720" height="720" alt="2 bottles of Ravella Ultra">
       </div>
       <div class="picker__panel">
         <p class="picker__label" id="qtyLabel">Number of bottles</p>
         <div class="stepper" role="group" aria-labelledby="qtyLabel">
           <button type="button" class="stepper__btn" id="qtyMinus" aria-label="One bottle fewer">−</button>
-          <output id="qtyOut" aria-live="polite">1</output>
+          <output id="qtyOut" aria-live="polite">2</output>
           <button type="button" class="stepper__btn" id="qtyPlus" aria-label="One bottle more">+</button>
         </div>
         <div class="chips" id="qtyChips" aria-label="Quick pick"></div>
 
-        <p class="picker__name" id="pickName">1 bottle</p>
-        <p class="picker__price" id="pickPrice">₦20,000</p>
+        <p class="picker__name" id="pickName">2 bottles (Ruby Package)</p>
+        <p class="picker__price" id="pickPrice">₦40,000</p>
         <p class="picker__unit" id="pickUnit">₦20,000 per bottle</p>
 
-        <button class="btn btn--gold btn--lg btn--block" id="pickOrder" data-order data-qty="1">Order 1 bottle</button>
+        <button class="btn btn--gold btn--lg btn--block" id="pickOrder" data-order data-qty="2">Order 2 bottles</button>
         <p class="picker__note">Fill in a short form, pay to the company account, then send your proof of payment on WhatsApp.</p>
       </div>
     </div>
@@ -603,7 +603,7 @@
       <details><summary>What are the benefits of Ravella Ultra?</summary><p>The main benefits people look for are steady energy through the day, support for digestion and regularity, internal cleansing and hydration. It's also a sugar-free, alcohol-free swap for sweet drinks. These benefits come from the traditional use of its herbs and from customer experience.</p></details>
       <details><summary>Is there alcohol in Ravella Ultra?</summary><p>No. “Organic wine” is part of the product name. The drink is completely alcohol-free and sugar-free.</p></details>
       <details><summary>Is Ravella Ultra NAFDAC approved?</summary><p>Ravella Ultra is NAFDAC listed under registration number A7-103154L. The “L” means it is a listed herbal product that NAFDAC has assessed for safety. Check that this number is printed on your bottle.</p></details>
-      <details><summary>How much is Ravella Ultra in Nigeria?</summary><p>As of November 2026, one 750 ml bottle costs ₦20,000. Two bottles cost ₦40,000, four cost ₦80,000, six cost ₦115,000 and ten cost ₦190,000. Registered distributors pay ₦15,000 per bottle with no delivery fee, starting from 4 bottles for ₦60,000.</p></details>
+      <details><summary>How much is Ravella Ultra in Nigeria?</summary><p>As of November 2026, Ravella Ultra costs ₦20,000 per 750 ml bottle, and regular orders start at 2 bottles. Two bottles (Ruby Package) cost ₦40,000, four cost ₦80,000, six cost ₦115,000 and ten cost ₦190,000. Registered distributors pay ₦15,000 per bottle with no delivery fee, starting from 4 bottles for ₦60,000.</p></details>
       <details><summary>How do I take Ravella Ultra?</summary><p>Shake the bottle well. Take 30 ml after a meal in the morning and again in the evening. About 10 minutes later, drink a glass of warm water. Don't take more than 60 ml a day.</p></details>
       <details><summary>How long does one bottle last?</summary><p>At 30 ml twice a day, a 750 ml bottle lasts about 12 days. A month's supply is about 3 bottles.</p></details>
       <details><summary>Does Ravella Ultra have side effects?</summary><p>Ravella Ultra contains senna, a natural laxative, so some people notice looser stools or more frequent bowel movements. Stick to the recommended amount. If you have an unusual reaction, stop taking it and speak to a healthcare professional.</p></details>
@@ -682,9 +682,9 @@
 <section class="final">
   <div class="wrap final__inner">
     <h2>Ready to order?</h2>
-    <p>₦20,000 per 750 ml bottle. Tell us your city and we'll confirm delivery on WhatsApp.</p>
+    <p>₦20,000 per 750 ml bottle, from 2 bottles (₦40,000). Tell us your city and we'll confirm delivery on WhatsApp.</p>
     <div class="hero__ctas">
-      <button class="btn btn--gold btn--lg" data-order data-qty="1">Order 1 bottle</button>
+      <button class="btn btn--gold btn--lg" data-order data-qty="2">Order 2 bottles</button>
       <a class="btn btn--light btn--lg" href="#packages">Choose a package</a>
     </div>
     <p class="final__phone">Questions first? <a href="#faq">Read the answers to common questions</a></p>
@@ -702,7 +702,7 @@
 
 <!-- Mobile sticky bar -->
 <div class="stickybar" id="stickybar">
-  <div><strong>₦20,000</strong><span> / bottle</span></div>
+  <div><strong>₦40,000</strong><span> / 2 bottles</span></div>
   <button class="btn btn--gold" data-order>Order now</button>
 </div>
 
@@ -726,7 +726,7 @@
       <legend class="sr">Package and contact details</legend>
 
       <div class="seg" role="radiogroup" aria-label="How do you want to buy?">
-        <label><input type="radio" name="track" value="retail" checked><span>Regular price<small>₦20,000 / bottle</small></span></label>
+        <label><input type="radio" name="track" value="retail" checked><span>Regular price<small>₦20,000 / bottle, from 2 bottles</small></span></label>
         <label><input type="radio" name="track" value="distributor"><span>Distributor<small>₦15,000 / bottle, from 4 bottles</small></span></label>
       </div>
 
@@ -898,8 +898,8 @@
   </form>
 </dialog>
 
-<script src="assets/js/config.js?v=20261105"></script>
-<script src="assets/js/analytics.js?v=20261105"></script>
-<script src="assets/js/main.js?v=20261105"></script>
+<script src="assets/js/config.js?v=20261105b"></script>
+<script src="assets/js/analytics.js?v=20261105b"></script>
+<script src="assets/js/main.js?v=20261105b"></script>
 </body>
 </html>

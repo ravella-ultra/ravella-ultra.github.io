@@ -30,7 +30,6 @@ window.RAVELLA = {
 
   // Retail ladder. price: null => "Ask for price on WhatsApp"
   retail: [
-    { qty: 1,  price: 20000 },
     { qty: 2,  price: 40000,  name: "Ruby Package" },
     { qty: 3,  price: 60000 },
     { qty: 4,  price: 80000,  name: "Heritage Package" },
