@@ -1,0 +1,371 @@
+import { test, describe, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { boot, onboardSeller, createDeal, buyerCheckout, completePayment, DEAL, BUYER, PHOTO } from './helpers.js';
+import { normaliseState } from '../src/lib/states.js';
+import { mapFezStatus, parseFezExpiry } from '../src/providers/logistics/fez.js';
+
+let realFetch;
+beforeEach(() => (realFetch = globalThis.fetch));
+afterEach(() => (globalThis.fetch = realFetch));
+const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+
+describe('states instead of fixed areas', () => {
+  test('state names are read the way people type them', () => {
+    assert.equal(normaliseState('lagos'), 'Lagos');
+    assert.equal(normaliseState('Lagos State'), 'Lagos');
+    assert.equal(normaliseState('  cross   river '), 'Cross River');
+    assert.equal(normaliseState('Abuja'), 'FCT');
+    assert.equal(normaliseState('Ikeja'), null);
+  });
+
+  test('the seller types both addresses and states', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const { pickup_state, ...noPickup } = DEAL;
+    assert.match((await t.post('/api/seller/deals', noPickup, seller)).data.error, /state you ship from/);
+    assert.match((await t.post('/api/seller/deals', { ...DEAL, delivery_state: 'Lekki' }, seller)).data.error, /buyer's state/);
+    assert.match((await t.post('/api/seller/deals', { ...DEAL, delivery_address: '' }, seller)).data.error, /delivery address/);
+    assert.match((await t.post('/api/seller/deals', { ...DEAL, weight_kg: 0 }, seller)).data.error, /weight/);
+    const deal = await createDeal(t, seller, { ...DEAL, pickup_state: 'rivers state', delivery_state: 'Abuja', weight_kg: '2.3', fragile: 'yes' });
+    assert.equal(deal.pickup_state, 'Rivers');
+    assert.equal(deal.delivery_state, 'FCT');
+    assert.equal(deal.weight_kg, 3, 'rounded up to whole kg, as Fez prices');
+    assert.equal(deal.fragile, true);
+  });
+
+  test('the seller sees the exact delivery fee, fees, buyer total and payout before creating the link', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const lagos = (await t.post('/api/seller/quote', DEAL, seller)).data;
+    const kano = (await t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano' }, seller)).data;
+    assert.equal(lagos.price.deliveryFee, 322_500);
+    assert.equal(kano.price.deliveryFee, 645_000);
+    assert.equal(lagos.price.buyerTotal, 4_995_700);
+    const deal = await createDeal(t, seller, DEAL);
+    assert.deepEqual(deal.price, lagos.price, 'the link charges exactly what the preview showed');
+    assert.equal((await t.post('/api/seller/quote', DEAL)).status, 401, 'sellers only');
+  });
+
+  test('the buyer sees the address read-only in step 1 and cannot change it at payment', async () => {
+    const t = boot();
+    const deal = await createDeal(t, await onboardSeller(t));
+    const view = (await t.get(`/api/deals/${deal.token}`)).data.deal;
+    assert.deepEqual(view.delivery, { address: DEAL.delivery_address, landmark: DEAL.delivery_landmark, state: 'Lagos' });
+    assert.equal(view.price.total, 4_995_700);
+    assert.doesNotMatch(JSON.stringify(view), /Allen Avenue/, 'never the pickup address');
+
+    const { checkout_id } = (await t.post(`/api/deals/${deal.token}/accept`, { penalty_acknowledged: true, terms_accepted: true })).data;
+    const stale = await t.post(`/api/deals/${deal.token}/pay`, { ...BUYER, checkout_id, expected_total: 100 });
+    assert.equal(stale.status, 409);
+    const sneaky = { ...BUYER, checkout_id, expected_total: view.price.total, delivery_address: '1 Other Street, Kano', delivery_state: 'Kano' };
+    assert.equal((await t.post(`/api/deals/${deal.token}/pay`, sneaky)).status, 200);
+    const order = await t.one('SELECT * FROM orders');
+    assert.equal(order.delivery_address, DEAL.delivery_address);
+    assert.equal(order.delivery_state, 'Lagos');
+    assert.equal(order.amount, 4_995_700);
+  });
+
+  test('delivery paid by the seller or split 50/50', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    const bySeller = (await t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano', delivery_payer: 'seller' }, seller)).data.price;
+    assert.equal(bySeller.buyerDelivery, 0);
+    assert.equal(bySeller.sellerPayout, 4_500_000 - 645_000);
+    const split = (await t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano', delivery_payer: 'split' }, seller)).data.price;
+    assert.equal(split.buyerDelivery, 322_500);
+    assert.equal(split.sellerDelivery, 322_500);
+    assert.equal(split.sellerPayout, 4_500_000 - 322_500);
+    assert.equal(split.buyerTotal - split.sellerPayout, split.deliveryFee + split.platformFee + split.processingFee);
+  });
+});
+
+describe('Fez', () => {
+  // No FEZ_SECRET_KEY: the secret key comes from the login reply, as in Fez's docs.
+  const FEZ = { LOGISTICS_PROVIDER: 'fez', FEZ_USER_ID: 'G-123', FEZ_PASSWORD: 'pw', FEZ_API_BASE: 'https://apisandbox.fez.test/v1' };
+
+  let tokenSeq = 0; // tokens stay unique across tests (the Worker caches its Fez session)
+
+  // A small fake Fez server: records every call and lets each test set the parcel's status.
+  function fakeFez() {
+    const calls = [];
+    const state = { status: 'Pending Pick-Up', reason: null, logins: 0, rejectToken: null, returnStatus: 'Pending Pick-Up' };
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      const body = init.body ? JSON.parse(init.body) : null;
+      calls.push({ url: u, method: init.method, headers: init.headers, body });
+      if (u.endsWith('/user/authenticate')) {
+        state.logins++;
+        // Shape taken from Fez's "Authenticate" docs.
+        return json({
+          status: 'Success',
+          description: 'Login Successfull',
+          authDetails: { authToken: `fez-token-${++tokenSeq}`, expireToken: '2099-01-01 00:00:00' },
+          userDetails: { userID: 'G-123', 'Full Name': 'TrustGap Admin', Username: 'trustgap' },
+          orgDetails: { 'secret-key': 'fez-secret', 'Org Full Name': 'TrustGap' },
+        });
+      }
+      if (state.rejectToken && init.headers?.Authorization === `Bearer ${state.rejectToken}`) {
+        return json({ status: 'Error', description: 'Unauthenticated' }, 401);
+      }
+      if (u.endsWith('/order/cost')) return json({ status: 'Success', cost: { state: body.state, cost: body.state === body.pickUpState ? 2500 : 6000 }, vat: { vatAmount: 187.5 }, totalCost: body.state === body.pickUpState ? 2687.5 : 6450 });
+      if (u.endsWith('/order') && init.method === 'POST') return json({ status: 'Success', description: 'Order Successfully Created', orderNos: { [body[0].uniqueID]: body[0].uniqueID.endsWith('-R') ? 'FEZRET1' : 'FEZ123456' } }, 201);
+      if (u.includes('/orders/FEZ123456')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZ123456', orderStatus: state.status, returnReason: state.reason, delivery_OTP: state.otp ?? null }] });
+      if (u.includes('/orders/FEZRET1')) return json({ status: 'Success', orderDetails: [{ orderNo: 'FEZRET1', orderStatus: state.returnStatus, delivery_OTP: state.returnOtp ?? null }] });
+      if (u.endsWith('/webhooks/store')) return json({ status: 'Success', data: { webhook: body.webhook } });
+      return json({ status: 'Error', description: 'unexpected ' + u }, 404);
+    };
+    return { calls, state };
+  }
+
+  test('live Fez with simulated payments: real prices, but no real rider is booked', async () => {
+    const fez = fakeFez();
+    const t = boot({ ...FEZ, FEZ_API_BASE: ' https://fez.test/v1 ', FEZ_USER_ID: ' G-123\n' });
+    const { seller, order } = await paidFezOrder(t);
+    assert.equal(fez.calls.find((c) => c.url.endsWith('/user/authenticate')).body.user_id, 'G-123');
+    const r = await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Black, serial 123' }, seller);
+    assert.match(r.data.error, /real rider/);
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'paid');
+    assert.ok(!fez.calls.some((c) => c.url.endsWith('/order') && c.method === 'POST'));
+  });
+
+  async function paidFezOrder(t) {
+    const seller = await onboardSeller(t);
+    const deal = await createDeal(t, seller, { ...DEAL, weight_kg: 2, fragile: 'yes' });
+    const r = await buyerCheckout(t, deal.token);
+    const trackToken = await completePayment(t, r.data.payment_url);
+    const order = await t.one('SELECT * FROM orders');
+    return { seller, deal, trackToken, order };
+  }
+
+  const sign = (orderNo, status, ts) => createHmac('sha256', 'fez-secret').update(`${orderNo}${status}${ts}`).digest('hex');
+  const webhook = (t, status, { signature, orderNo = 'FEZ123456' } = {}) => {
+    const ts = String(Math.floor(Date.now() / 1000));
+    return t.call('POST', '/webhooks/fez', { orderNumber: orderNo, status }, null, {
+      'X-Timestamp': ts,
+      'X-Signature': signature ?? sign(orderNo, status, ts),
+    });
+  };
+
+  test('prices delivery with /order/cost (cost + VAT) and sends the right headers', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const seller = await onboardSeller(t);
+    const q = await t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano', weight_kg: 2 }, seller);
+    // Fez's ₦6,450 plus TrustGap's 15% handling margin (₦967.50), rounded up: ₦7,418. The courier's
+    // own cost is never sent to the seller.
+    assert.equal(q.data.price.deliveryFee, 741_800);
+    assert.ok(!JSON.stringify(q.data).includes('645000'));
+    const cost = fez.calls.find((c) => c.url.endsWith('/order/cost'));
+    assert.deepEqual(cost.body, { state: 'Kano', pickUpState: 'Lagos', weight: 2 });
+    assert.equal(cost.headers['secret-key'], 'fez-secret');
+    assert.match(cost.headers.Authorization, /^Bearer fez-token-\d+$/);
+  });
+
+  test('booking creates the Fez order with the buyer’s details; Fez makes the delivery code, not TrustGap', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, trackToken, order } = await paidFezOrder(t);
+    const view = (await t.get(`/api/track/${trackToken}`)).data.order;
+    assert.equal(view.pin, null, 'no TrustGap PIN on a Fez order');
+    assert.equal(view.code_by_courier, true);
+    const paidSms = (await t.db("SELECT sms FROM outbox WHERE event = 'payment_received_buyer'"))[0].sms;
+    assert.match(paidSms, /Fez Delivery will text you a delivery code/);
+    assert.doesNotMatch(paidSms, /PIN is \d{4}/);
+    const booked = await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box, serial 42' }, seller);
+    assert.equal(booked.status, 200, JSON.stringify(booked.data));
+    // The ledger keeps Fez's cost and TrustGap's margin apart (same state: Fez ₦2,688 + 15% → ₦3,092).
+    const rows = await t.db("SELECT kind, amount FROM ledger WHERE kind IN ('delivery_cost', 'delivery_margin') ORDER BY kind");
+    assert.deepEqual(rows.map((r) => [r.kind, r.amount]), [['delivery_cost', 268_800], ['delivery_margin', 40_400]]);
+    const create = fez.calls.find((c) => c.url.endsWith('/order') && c.method === 'POST').body;
+    assert.equal(create.length, 1);
+    assert.equal(create[0].uniqueID, order.ref);
+    assert.equal(create[0].CustToken, undefined, 'Fez generates the code itself');
+    assert.equal(create[0].recipientState, 'Lagos');
+    assert.equal(create[0].recipientAddress, DEAL.delivery_address);
+    assert.equal(create[0].pickUpState, 'Lagos');
+    assert.equal(create[0].weight, 2);
+    assert.equal(create[0].fragile, true);
+    assert.equal(create[0].thirdparty, 'true');
+    assert.equal(create[0].senderName, 'Bayo Kicks');
+    assert.equal(create[0].valueOfItem, '45000');
+    const saved = await t.one('SELECT delivery_ref, courier, rider_url FROM orders');
+    assert.deepEqual({ ...saved }, { delivery_ref: 'FEZ123456', courier: 'fez', rider_url: null });
+  });
+
+  test('status webhooks are re-checked with Fez; Delivered starts the inspection window', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+
+    // A forged webhook claiming "Delivered" changes nothing: Fez itself still says Dispatched.
+    fez.state.status = 'Dispatched';
+    fez.state.otp = '5821'; // Fez's delivery code, texted to the buyer at dispatch
+    await webhook(t, 'Delivered', { signature: 'forged' });
+    let o = await t.one('SELECT * FROM orders');
+    assert.equal(o.status, 'shipping');
+    assert.equal(o.delivery_status, 'out_for_delivery');
+    assert.equal(o.courier_status, 'Dispatched');
+    // The buyer sees Fez's code on their tracking page (kept encrypted), and the text points to it.
+    assert.ok(o.courier_code_enc && !o.courier_code_enc.includes('5821'));
+    const { trackToken } = await t.one('SELECT buyer_token AS trackToken FROM orders');
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.order.courier_code, '5821');
+    assert.match((await t.db("SELECT sms FROM outbox WHERE event = 'delivery_out_for_delivery'"))[0].sms, /Fez Delivery has texted you a delivery code/);
+
+    fez.state.status = 'Delivered';
+    await webhook(t, 'Delivered');
+    o = await t.one('SELECT * FROM orders');
+    assert.equal(o.status, 'delivered');
+    assert.ok(o.inspection_ends_at);
+    const events = (await t.db('SELECT type FROM order_events WHERE order_id = ?', o.id)).map((e) => e.type);
+    assert.ok(events.includes('delivered_by_courier'));
+    assert.equal((await t.get(`/api/track/${trackToken}`)).data.order.courier_code, null, 'hidden once delivered');
+  });
+
+  test('the timers catch up a missed webhook, and a returned parcel opens a dispute', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    fez.state.status = 'Picked-Up';
+    await t.scheduled();
+    assert.equal((await t.one('SELECT delivery_status FROM orders')).delivery_status, 'picked_up');
+    fez.state.status = 'Returned';
+    fez.state.reason = 'Recipient unreachable';
+    await t.scheduled();
+    const o = await t.one('SELECT * FROM orders');
+    assert.equal(o.status, 'disputed');
+    const d = await t.one('SELECT * FROM disputes');
+    assert.equal(d.category, 'returned_by_courier');
+    assert.match(d.description, /Recipient unreachable/);
+    // Fez's "Returned" is the record that the seller has it back, so a decision pays out at once.
+    const ret = await t.one('SELECT * FROM returns');
+    assert.deepEqual([ret.kind, ret.status, ret.received_by], ['door', 'received', 'courier']);
+  });
+
+  test('a refusal recorded by Fez’s rider opens a dispute and starts the return; Returned completes it', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    fez.state.status = 'Rejected';
+    fez.state.reason = 'Customer rejected item';
+    await t.scheduled();
+    const o = await t.one('SELECT status, delivery_status FROM orders');
+    assert.deepEqual([o.status, o.delivery_status], ['disputed', 'refused']);
+    assert.equal((await t.one('SELECT category FROM disputes')).category, 'refused_at_door');
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'with_rider');
+    fez.state.status = 'Returned';
+    await t.scheduled();
+    assert.deepEqual({ ...(await t.one('SELECT kind, status, received_by FROM returns')) }, { kind: 'door', status: 'received', received_by: 'courier' });
+  });
+
+  test('a return after delivery is a new Fez order with Fez’s own code for the seller; Delivered releases the refund', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const { seller, trackToken, order } = await paidFezOrder(t);
+    await t.post(`/api/seller/orders/${order.id}/book`, { packing_note: 'Blue box' }, seller);
+    fez.state.status = 'Delivered';
+    await webhook(t, 'Delivered');
+    await t.post(`/api/track/${trackToken}/dispute`, { category: 'damaged', description: 'Sole is torn', photos: [PHOTO] });
+    const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+    const dispute = await t.one('SELECT * FROM disputes');
+    const r = await t.post(`/api/admin/disputes/${dispute.id}/resolve`,
+      { buyer_refund: '1000', seller_payout: '0', seller_charge: '0', note: 'Torn sole in photos; item goes back.' }, admin);
+    assert.equal(r.data.waiting_for_return, true, JSON.stringify(r.data));
+
+    const ret = (await t.get(`/api/seller/orders/${order.id}`, seller)).data.return;
+    assert.equal(ret.pin, undefined, 'no TrustGap return PIN on a Fez return');
+    assert.equal(ret.code_by_courier, true);
+    const create = fez.calls.filter((c) => c.url.endsWith('/order') && c.method === 'POST').at(-1).body[0];
+    assert.equal(create.uniqueID, `${order.ref}-R`);
+    assert.equal(create.CustToken, undefined);
+    assert.equal(create.recipientName, 'Bayo Kicks');
+    assert.equal(create.recipientAddress, DEAL.pickup_address);
+    assert.equal(create.pickUpAddress, order.delivery_address);
+    assert.match(create.itemDescription, /^RETURN: /);
+    assert.equal((await t.one('SELECT delivery_ref FROM returns')).delivery_ref, 'FEZRET1');
+
+    fez.state.returnStatus = 'Picked-Up';
+    fez.state.returnOtp = '7734';
+    await t.scheduled();
+    assert.equal((await t.one('SELECT status FROM returns')).status, 'picked_up');
+    assert.equal((await t.get(`/api/seller/orders/${order.id}`, seller)).data.return.courier_code, '7734');
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'disputed');
+
+    fez.state.returnStatus = 'Delivered';
+    await webhook(t, 'Delivered', { orderNo: 'FEZRET1' });
+    assert.equal((await t.one('SELECT status FROM orders')).status, 'refunded');
+    assert.equal((await t.one('SELECT received_by FROM returns')).received_by, 'courier');
+  });
+
+  test('admin can register the webhook with Fez', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const admin = (await t.post('/api/admin/login', { password: 'test-admin-password' })).data.token;
+    const r = await t.post('/api/admin/courier/register-webhook', {}, admin);
+    assert.equal(r.data.registered, 'https://api.test/webhooks/fez');
+    assert.deepEqual(fez.calls.find((c) => c.url.endsWith('/webhooks/store')).body, { webhook: 'https://api.test/webhooks/fez' });
+  });
+
+  test('logs in with user_id/password, takes the secret key from the reply, and re-logs in when a token is refused', async () => {
+    const fez = fakeFez();
+    const t = boot(FEZ);
+    const seller = await onboardSeller(t);
+    const quote = () => t.post('/api/seller/quote', { ...DEAL, delivery_state: 'Kano' }, seller);
+
+    assert.equal((await quote()).status, 200);
+    const firstCost = fez.calls.filter((c) => c.url.endsWith('/order/cost')).at(-1);
+    assert.equal(firstCost.headers['secret-key'], 'fez-secret');
+    const usedToken = firstCost.headers.Authorization.replace('Bearer ', '');
+
+    // Fez stops accepting that token (e.g. it expired early): one fresh login, then the call succeeds.
+    fez.state.rejectToken = usedToken;
+    const loginsBefore = fez.state.logins;
+    const r = await quote();
+    assert.equal(r.status, 200);
+    assert.equal(fez.state.logins, loginsBefore + 1);
+    const login = fez.calls.filter((c) => c.url.endsWith('/user/authenticate')).at(-1);
+    assert.deepEqual(login.body, { user_id: 'G-123', password: 'pw' });
+    assert.notEqual(fez.calls.filter((c) => c.url.endsWith('/order/cost')).at(-1).headers.Authorization, `Bearer ${usedToken}`);
+  });
+
+  test('token expiry is read as Lagos time', () => {
+    assert.equal(parseFezExpiry('2023-01-27 05:06:08'), Date.parse('2023-01-27T04:06:08Z'));
+    assert.ok(Number.isNaN(parseFezExpiry('')));
+  });
+
+  test('Fez statuses map to delivery stages', () => {
+    assert.equal(mapFezStatus('Pending Pick-Up'), 'booked');
+    assert.equal(mapFezStatus('Pending Payment'), 'awaiting_payment');
+    assert.equal(mapFezStatus('Picked-Up'), 'picked_up');
+    assert.equal(mapFezStatus('Dispatched'), 'out_for_delivery');
+    assert.equal(mapFezStatus('Delivered'), 'delivered');
+    assert.equal(mapFezStatus('Returned'), 'returned');
+    assert.equal(mapFezStatus('Failed Pick-Up'), 'problem');
+    assert.equal(mapFezStatus('Rejected At Drop-off'), 'problem');
+  });
+});
+
+describe('minimum price for the delivery', () => {
+  test('the item price must be at least twice the delivery fee, so both trips are always covered', async () => {
+    const t = boot();
+    const seller = await onboardSeller(t);
+    // Lagos → Lagos manual delivery is ₦3,225, so the minimum is ₦6,450.
+    const low = await t.post('/api/seller/quote', { ...DEAL, item_price: '6,449' }, seller);
+    assert.equal(low.status, 400);
+    assert.match(low.data.error, /For delivery to Lagos \(₦3,225\), the item price must be at least ₦6,450: twice the delivery fee/);
+    assert.match((await t.post('/api/seller/deals', { ...DEAL, item_price: '6,000' }, seller)).data.error, /at least ₦6,450/);
+    assert.equal((await t.post('/api/seller/quote', { ...DEAL, item_price: '6,450' }, seller)).status, 200);
+    // Another state costs more, so the minimum rises with it.
+    const far = await t.post('/api/seller/quote', { ...DEAL, item_price: '10,000', delivery_state: 'Kano' }, seller);
+    assert.match(far.data.error, /Kano \(₦6,450\).*at least ₦12,900/);
+  });
+
+  test('can be turned off', async () => {
+    const t = boot({ MIN_PRICE_DELIVERY_MULTIPLE: '0' });
+    const seller = await onboardSeller(t);
+    assert.equal((await t.post('/api/seller/quote', { ...DEAL, item_price: '1,000', delivery_payer: 'buyer' }, seller)).status, 200);
+  });
+});

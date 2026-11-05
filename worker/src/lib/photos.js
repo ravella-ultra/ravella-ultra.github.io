@@ -1,0 +1,76 @@
+// Item photos. The website shrinks each photo on the seller's phone to a ~1280px JPEG before upload;
+// the Worker checks it really is a JPEG, removes any metadata the phone may have left in it (camera
+// details, GPS location), and stores it in D1 next to the deal.
+import { UserError } from './http.js';
+
+export const MAX_PHOTOS = 4;
+export const MAX_PHOTO_BYTES = 600 * 1024;
+
+// Turns the uploaded photos into clean JPEG bytes. Each is a data URL ("data:image/jpeg;base64,…"),
+// or { data, source, stamp_token, taken_at, phash } with what the page knows about how it was taken
+// (checked later by lib/evidence.js; the page's claims are hints, never trusted on their own).
+export async function parsePhotos(input, max = MAX_PHOTOS) {
+  const list = Array.isArray(input) ? input : input ? [input] : [];
+  if (list.length > max) throw new UserError(`Add up to ${max} photos.`);
+  const photos = [];
+  for (const entry of list) {
+    const item = entry && typeof entry === 'object' ? entry.data : entry;
+    const meta = entry && typeof entry === 'object' ? entry : {};
+    const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(item));
+    if (!m) throw new UserError('Each photo must be a JPEG image. Try adding it again.');
+    let bytes;
+    try {
+      bytes = Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0));
+    } catch {
+      throw new UserError('A photo could not be read. Try adding it again.');
+    }
+    if (bytes.length > MAX_PHOTO_BYTES) throw new UserError('A photo is too large. Try a smaller one.');
+    const clean = stripJpegMetadata(bytes);
+    photos.push({
+      mime: 'image/jpeg', data: clean, bytes: clean.length, sha256: await sha256Bytes(clean),
+      phash: /^[0-9a-f]{16}$/.test(String(meta.phash || '')) ? meta.phash : null,
+      source: meta.source === 'camera' ? 'camera' : 'upload',
+      stampToken: meta.source === 'camera' ? String(meta.stamp_token || '').slice(0, 300) : null,
+      takenAt: meta.taken_at && !Number.isNaN(new Date(meta.taken_at).getTime()) ? new Date(meta.taken_at).toISOString() : null,
+      cameraInfo: meta.camera_info === true,
+    });
+  }
+  return photos;
+}
+
+// Removes APP1 (EXIF/XMP, which can hold GPS location) and APP13 (IPTC) segments and comments from
+// a JPEG, keeping the image data unchanged. Throws if the file isn't a well-formed JPEG.
+export function stripJpegMetadata(b) {
+  if (b[0] !== 0xff || b[1] !== 0xd8) throw new UserError('Each photo must be a JPEG image. Try adding it again.');
+  const out = [b.subarray(0, 2)];
+  let i = 2;
+  let imageData = false;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xff) throw new UserError('A photo is damaged. Try adding it again.');
+    const marker = b[i + 1];
+    if (marker === 0xda) { out.push(b.subarray(i)); imageData = true; break; } // start of image data: copy the rest as is
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (len < 2 || i + 2 + len > b.length) throw new UserError('A photo is damaged. Try adding it again.');
+    if (marker !== 0xe1 && marker !== 0xed && marker !== 0xfe) out.push(b.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  if (!imageData) throw new UserError('A photo is damaged. Try adding it again.');
+  const size = out.reduce((n, p) => n + p.length, 0);
+  const clean = new Uint8Array(size);
+  let at = 0;
+  for (const p of out) { clean.set(p, at); at += p.length; }
+  return clean;
+}
+
+async function sha256Bytes(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+// Private photo addresses (dispute evidence): signed, and only valid for a couple of hours.
+export const EVIDENCE_LINK_HOURS = 2;
+
+// Public addresses of a deal's photos (served by GET /api/deals/:token/photos/:n). The short hash in
+// the address lets browsers cache each photo for good: a deal's photos never change.
+export const photoUrls = (ctx, deal, rows) =>
+  rows.map((p) => `${ctx.config.apiUrl}/api/deals/${encodeURIComponent(deal.token)}/photos/${p.position}?v=${p.sha256.slice(0, 10)}`);

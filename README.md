@@ -1,123 +1,229 @@
-# Ravella Ultra landing page
+# TrustGap
 
-A static landing page for Ravella Ultra Solution Organic Wine, ready for GitHub Pages.
+Payment protection for Nigerian social-commerce deals (WhatsApp, Instagram, X).
+**Agree. Secure. Deliver. Inspect. Release.** The seller sends one link; the buyer reviews the deal
+and pays; the payment is secured under the deal rules; the courier delivers and the buyer's PIN
+confirms it; the seller is paid after a short inspection window.
 
-- `index.html`: the page
-- `assets/js/config.js`: **prices, the WhatsApp number and your Web3Forms key. Edit this file, not the others.**
-- `assets/js/main.js`: bottle picker, order/registration form, Web3Forms submission and WhatsApp handoff
-- `assets/css/style.css`: styles
-- `assets/img/`: product photos, logo, favicon and share image
+Live site: https://trustgap-co.github.io/
 
-## How the order flow works
+> **Status: pilot build, test mode.** Payments, identity checks and delivery are simulated until
+> each partner is connected. The policy pages are **drafts under legal review**. See
+> [SETUP.md](SETUP.md) for setup and [TRACKING.md](TRACKING.md) for analytics.
 
-Customers pay to the company account **before** they reach WhatsApp, for both regular orders and distributor packages.
+## Stack
 
-1. A visitor taps any order button. Buttons with no package attached default to 1 bottle.
-2. They fill in one of two separate forms:
-   - **Regular order** (any "Order" button): package, name, WhatsApp number, address and state, then the 4 questions with the adult/suitability tick box
-   - **Distributor sign-up** (any distributor button): package, name, WhatsApp number, address and state, then username, email, gender and bank details. There are no qualification questions.
-3. They tap **Submit and pay**. Nothing is emailed yet.
-4. The page shows the **company account** (RAVELLA ULTRA SOLUTION, UBA, 1028701744), the exact amount, and their reference to use as the narration. Each detail has a Copy button.
-5. The **"Yes, I have made the payment"** button stays locked until they enter the name and bank they paid from and an amount at least equal to the total, and tick the confirmation box.
-6. You get **one** email containing everything, titled **"PAID order: …"** or **"PAID distributor registration: …"**. Check it against your UBA statement.
-7. Only then does the **"Send proof of payment on WhatsApp"** button appear. Their message arrives with the reference, amount, payer name and bank, and asks them to attach the receipt.
+| Part | Tool |
+|---|---|
+| Website | Static HTML/JS in `docs/`, hosted on **GitHub Pages** (no build step) |
+| Analytics | **Google Analytics 4** + **Meta Pixel**, behind a cookie-consent banner |
+| Server, timers | **Cloudflare Worker** in `worker/` (cron every 5 minutes) |
+| Database | **Cloudflare D1** (source of truth), copied read-only to **Google Sheets** every 15 minutes |
+| Seller identity | **Monnify** NIN verification (name and date-of-birth match, 3 attempts) |
+| SMS and email | **Make.com** webhook → **KudiSMS** / email |
+| Payments | **Flutterwave** Collect-and-Transfer: collect into the wallet, pay sellers with the Transfers API (gated until custody is approved) |
+| Delivery | **Fez** API: delivery priced per buyer state, pickups booked with the buyer's PIN, status by webhook (manual rider links as an alternative) |
 
-Regular orders pay for the bottles only, and you confirm delivery after payment. Distributor packages have no delivery fee, so the amount shown is the full price.
+## How a deal flows
 
-If someone leaves for their bank app and the page reloads, a **"Finish payment"** bar brings them back to the account details for the same order.
+1. **Seller signs up with an SMS code** (no passwords), verifies a payout account in their own
+   name, and verifies their identity with their NIN.
+2. **Seller creates a link**: item, 1 to 4 photos of the actual item, condition, price, private pickup address and state, the
+   buyer's delivery address and state (from the chat), parcel weight, fragile or not, ship-within
+   days, who pays delivery and who pays the fees (buyer, seller or 50/50), and expiry time. A live
+   preview shows the courier's delivery fee, both fees, what the buyer pays and what the seller
+   receives before the link is created. Links can't be edited; a change makes a new link.
+3. **Buyer, step 1: review**: the item and its photos, the delivery address (read-only), the exact price
+   breakdown and the protection rules. Confirming saves a hashed copy of exactly what they agreed to.
+   A wrong detail means asking the seller for a corrected link.
+4. **Buyer, step 2: details & pay**: name, phone, email, and a refund account in the buyer's own
+   name (encrypted, never shown to the seller). Then payment of exactly the total from step 1.
+5. **Money held**: the buyer gets a 4-digit delivery PIN by SMS and on their tracking page.
+6. **Seller books pickup** with a packing note (evidence). TrustGap creates the Fez order with the
+   buyer's PIN as Fez's confirmation token; Fez status updates (webhook + a 5-minute check) move the
+   order to delivered. With manual riders, the rider can only mark it delivered with the buyer's PIN.
+7. **Inspection window** (24h): buyer confirms or reports a problem; otherwise the seller is paid
+   automatically.
+**Confirmations, in the person's face.** When the seller taps *Create link*, a pop-up asks "Is the
+item in good condition, exactly as agreed with the buyer?" and shows the cost of a false description
+(twice the delivery fee, in naira). When the buyer taps *Confirm & proceed to payment*, a pop-up shows
+the cost of changing their mind after paying. Both are required, recorded word for word with the time,
+shown to admin on the order page and copied to Google Sheets.
 
-Change the account details in `assets/js/config.js` under `bank`.
+8. **Disputes**: the buyer reports the problem with up to 2 photos (required when the item is wrong,
+   damaged, fake or not as described). Admin sees the photos on the order page straight away, with
+   everything else, and decides the refund, payout and any charge to the seller. A seller who owes a
+   charge sees **Pay ₦X now** on their dashboard (the payment page), or it's taken from their next payout.
 
-**Limitation:** a static page can't read your UBA account, so the payment check relies on what customers type plus the receipt they send on WhatsApp. Always match the "Payment claimed" email against your statement before dispatching. For automatic confirmation later, add Paystack or Flutterwave. Settlement can still go to the same UBA account.
+9. **Returns**: a refund for an item that has to go back is only sent once the **seller has it back**.
+   The seller gets a 4-digit **return PIN** (SMS and their order page) and gives it to the rider after
+   checking the item, like the buyer's delivery PIN in reverse.
+   - **Refused at the door**: the same rider takes it straight back and enters the seller's PIN.
+   - **Problem found after delivery**: any refund admin decides books a new courier order from the
+     buyer to the seller (with Fez, a new Fez order carrying the seller's PIN). Every item goes back,
+     however cheap; there is no "refund and keep it". The decision is saved and the money waits.
+   - **Refused at the door**: admin reviews it like any dispute and decides the split; the money
+     moves once the seller has the item back and the decision is made.
+   - Fallbacks: the seller can tap **I already have it back**; admin can **mark it received** or
+     **cancel the return and decide again** (buyer never handed it over).
+   - **Returned item isn't right**: the seller accepts the parcel but, before giving the PIN, reports
+     it with stamped camera photos. The return is recorded as received, the earlier decision is set
+     aside, a new dispute opens and the refund stays on hold.
+   - **Photo evidence**: buyers' problem photos and sellers' returned-item photos are taken with the
+     in-page **TrustGap camera**, stamped with the order number, time and a signed code. Uploads from
+     the phone are still possible but flagged; the Worker also flags old or detail-less pictures and
+     copies of the listing photos (picture fingerprints). Listing photos open the phone camera directly.
 
-## 1. Connect Web3Forms (2 minutes)
+10. **Team portal and manual** (`/team/`): the admin adds team members on **Admin → Team** (name,
+   email, phone, temporary password) and assigns them tasks, optionally about an order. Members log
+   in with their own email and password (stored hashed; must change the temporary one first), see
+   only their tasks, add notes, mark them done, and open the orders their tasks are about read only
+   (no bank details or PINs). A **Decide a dispute** task lets the member decide that order's open
+   dispute while the task is open (same rules, checks and return rule as the admin; recorded as
+   `team:<name>` on the dispute and in the timeline; the task closes itself). The **team manual** (how TrustGap works end to end,
+   statuses, fees, disputes, returns, answers to common questions, team rules) is served by the
+   Worker only to the admin and signed-in members; it isn't a public page. Edit it in
+   `worker/src/manual.js`.
 
-1. Go to <https://web3forms.com>, enter the Gmail address that should receive orders, and click **Create Access Key**.
-2. Copy the access key from the email Web3Forms sends you.
-3. The key is already set in `assets/js/config.js` (`web3formsKey`). Change it there if you ever create a new one.
-4. Submit a test order on the live site and check your Gmail. Look in Spam the first time, then mark the email as "Not spam".
+11. **One case, every side's account; live pages**: the first report opens the case; the buyer, seller
+   and rider (or Fez) add their side to it with photos instead of getting an error. Staff see all
+   accounts side by side, who hasn't been heard from, and any disagreement about where the parcel is.
+   Buyer, seller, rider, admin and team pages check for changes every 30 seconds while open, without
+   redrawing over anything being typed.
 
-Notes:
-- The access key is designed to sit in public code. It can only send to your email.
-- The free plan has a monthly submission limit. Check web3forms.com for the current limit, and upgrade if you outgrow it.
-- Web3Forms emails you each submission. If you also want a spreadsheet, Web3Forms paid plans and Zapier/Make can forward submissions to Google Sheets.
-- Distributor bank details pass through Web3Forms to your inbox. Turn on 2-step verification on that Gmail account.
+12. **Security**: payment and NIN simulators refuse to work outside test mode; rate limits per
+   connection and a daily SMS budget; the same login reply for every number; survey answers go through
+   the Worker (the Make address is a secret); a Content Security Policy, referrer rule and frame guard in
+   every page (`tools/security.py`); health details and risky-settings warnings only for the admin;
+   `security.txt`.
 
-## 2. Put the site on GitHub Pages
+13. **Suspending a seller** (Admin → Sellers, with a reason sent to them by SMS): no new links, their
+   open links stop taking payments ("paused"), payouts are held and released on unsuspend, and buyers
+   who already paid still get their items. Reason, date and history show on the Sellers page and Sheet.
+14. **Records by date**: Orders, Disputes, Sellers, Messages and Ledger are grouped by day, with
+   From/To filters, one-tap ranges (Today, Yesterday, Last 7 days, This month) and newest/oldest order;
+   the ledger shows money in and out per day and totals for the chosen dates.
+15. **No surprises, no silence**: the deal page shows the seller's record (since when, links created,
+   completed orders, disputes decided against them) and "exactly what you are agreeing to"; buyer and
+   seller order pages show the journey (Agreed → Payment secured → Preparing → Picked up → On the way →
+   Delivered → Inspection → Released) with what happens next; every SMS ends with the next step; the
+   PIN box has a doorstep checklist; a problem report gets a case reference (e.g. TG-7K2P9Q-C12) and an
+   update promised within 24 hours. The team manual has the support standard.
+16. **Price calculator for sellers** (`seller/price.html`): the exact price of a deal from both addresses
+   and who pays what, using the same quote as link creation, a ready message to send the buyer, and
+   "Create a payment link with these details", which opens the new-link form already filled in.
+17. **Survey ad mode**: visitors from paid ads (utm_medium=paid… or an ad click ID) give their first name and
+   WhatsApp number first (saved to the early-access list at once), then answer the survey or skip to
+   their code; organic visitors keep optional contact, now with "Yes, send me my code" pre-selected.
+   Every survey and early-access row records the mode, campaign, ad and click source (SETUP.md §10).
+18. **Fez delivery codes**: on Fez orders Fez makes the delivery code and texts it at dispatch; TrustGap
+   reads it (`delivery_OTP`) and shows it on the buyer's tracking page (or the seller's page for a
+   return) instead of its own PIN. Your own riders keep TrustGap's PIN.
+19. **Customer Relations Admin** (one at a time, added on Admin → Team): logs in at the team portal with
+   password + texted code and works on the admin pages: decides any dispute, handles returns, can
+   suspend (not unsuspend) sellers, manages customer relations members and tasks; no Ledger, payouts,
+   debts, deal limits or settings; bank numbers masked. Every new dispute is texted to them and to
+   `ADMIN_ALERT_PHONE`; decisions by anyone else are texted to the admin. Customer relations members
+   decide only with a task and only up to `TEAM_DISPUTE_CAP_NAIRA` (200,000). Disputes have WhatsApp
+   buyer/seller buttons.
+20. **Guided tours** (`tour.js`, words in `tours.js`), never on the public pages. Sellers: dashboard,
+   settings, new payment link, price calculator, order page. Buyers: deal link step 1 and step 2
+   (step 2 follows straight on if they took the step 1 tour) and the tracking page. Always offered,
+   never forced: an invitation, and a "Show me around" (?) button to replay. Back / Next / Skip; once finished or skipped, not offered again on
+   that device. GA4 events: tour_offered, tour_started, tour_step, tour_completed, tour_skipped, tour_declined.
+21. **Estimated delivery** (`lib/eta.js`): from Fez's timelines (same state 24-48 hours after pickup, up
+   to 72 for remote areas; another state 3-7 working days). Shown on the seller's price box and
+   calculator, the deal link, the tracking and order pages and the admin order page, and in the payment
+   and picked-up SMS. It narrows as the order moves (quote, paid, booked, picked up) and notes the busy
+   season until `ETA_BUSY_UNTIL`.
+22. **Referrals** (`core/referrals.js`): every seller has an invite code and link (dashboard card with
+   copy and WhatsApp share). New sellers who join with it get 2 free deals (no TrustGap fee); the
+   inviter gets 1 free deal when the new seller's first order (item ₦10,000+) completes with no
+   dispute; blocked for the same bank account, identity or phone, and capped at 10 a month. Free deals
+   apply to the next link automatically (can be unticked) and expire after 90 days. 5 successful
+   invites earn a TrustGap Ambassador badge shown to buyers. Buyers get a share card after a completed
+   order (WhatsApp message and a status picture), with a link to join with the seller's invite.
+   Admin → Sellers shows top referrers and each seller's referrals. Waived fees are recorded in the
+   ledger (`fee_waived`, status `info`).
+23. **Ledger segments** (Admin → Ledger): Money in, Paid out, TrustGap revenue, Costs, Giveaways,
+   Other and Needs attention, each with its total for the chosen dates; tap one to list only its entries.
 
-1. On the GitHub account or organisation **ravella-ultra**, create a public repository named exactly **`ravella-ultra.github.io`**. That name is what puts the site at https://ravella-ultra.github.io/.
-2. Upload everything in this folder to the root of the repository, including the hidden `.nojekyll` file.
-3. Go to **Settings → Pages**. Under **Source**, choose **Deploy from a branch**, then `main` and `/ (root)`. Save.
-4. After a minute or two the site is live at https://ravella-ultra.github.io/.
+**Fees**, shown as separate lines on every link: **TrustGap fee** 1.5% of the item price up to
+₦200,000 and 1% above (minimum ₦100, maximum ₦15,000; the item price must be at least twice the
+delivery fee), **Payment processing**, Flutterwave's charges passed on at cost (2%, capped at ₦2,000,
+plus the ₦57.79 payout fee), and **Delivery**, TrustGap's own service: the courier's price plus a 15%
+handling margin (at most ₦2,000; not added to your own riders' prices). The ledger keeps the courier's
+cost (`delivery_cost`) and the margin (`delivery_margin`) apart. A **dispute fee** (10% of the item
+price, ₦1,000 to ₦3,000, shown on the deal) is paid by whoever staff find at fault: from the buyer's
+refund, or the seller's payout or debt; none when the courier or no one is at fault. Deals above
+₦1,000,000 send the seller to support; the admin can raise one seller's limit on Admin → Sellers.
+The seller and buyer agree who pays the fees and delivery (buyer, seller or 50/50). Seller payouts go out the next working
+day after the buyer paid, once Flutterwave has settled the money.
 
-## 3. Connect GA4 and Meta Pixel
+Timers also expire links, cancel abandoned checkouts, refund buyers when sellers miss the ship-by
+date, and retry failed SMS. Every money step is atomic, so a webhook, a redirect and a timer
+acting at the same moment can't pay twice.
 
-Open `assets/js/config.js` and paste in your IDs:
+## The website
 
-```js
-ga4Id: "G-XXXXXXXXXX",        // GA4: Admin > Data streams > your web stream > Measurement ID
-metaPixelId: "1234567890123456", // Events Manager > Data sources > your Pixel > Pixel ID
+| Page | What it is |
+|---|---|
+| `index.html` | Home: animated hero (Agree → Secure → Deliver → Inspect → Release), why TrustGap, how it works, buyers, sellers, example deal, delivery, fees, FAQ |
+| `how.html` | The full process: what “payment secured” means, every order status, the inspection window, what happens when things go wrong, returns, payouts |
+| `buyers.html`, `sellers.html` | One page for each side; sellers get a payout calculator |
+| `fees.html` | Fees, calculator (same maths as the Worker), who pays and what is refundable |
+| `faq.html` | Questions, including safety and privacy |
+| `about.html` | The company and the team (photos in `docs/assets/images/team/`) |
+| `survey.html`, `early-access.html` | Pre-launch campaign: buyer/seller survey and early-access sign-up, sent to Google Sheets through Make |
+| `legal/` | 10 policy pages from the Legal Content Pack, marked “Draft: under legal review” |
+| `pay.html`, `track.html` | The buyer's deal link and private tracking page |
+| `seller/`, `admin/`, `rider.html` | Seller app, staff admin, courier-rider page |
+
+**Search engines and AI assistants:** titles, link previews, structured data, `robots.txt`,
+`sitemap.xml` and `llms.txt` are set up. After editing a page, run `python3 tools/seo.py` (SETUP.md §11).
+
+**Launch switch:** `launched: false` in `docs/assets/js/site-info.js` makes the site promote early
+access and the survey; set it to `true` on launch day and the deal buttons come back (SETUP.md §10).
+
+**Early-access code** `EARLYGAP`: no TrustGap fee on one deal per seller and one order per buyer phone.
+
+Things you edit by hand:
+- **`docs/assets/js/site-info.js`**: company name, RC number, addresses, emails, phone, dates and
+  response times (shown on every page and in the policies; anything still in `[brackets]` is
+  highlighted in yellow), the GA4 and Meta Pixel IDs, `policiesApproved` (removes the draft notices
+  once your lawyer approves) and `partnerNamesApproved` (shows the Flutterwave/Fez line once both
+  approve).
+- **`docs/assets/images/`**: photos. The file names and sizes are listed in that folder's README;
+  until a photo is added, the page shows a labelled placeholder.
+- **`docs/assets/js/config.js`**: the Worker's address.
+
+Copy guardrails (from the trust report): don't say “escrow”, “guaranteed”, “verified seller”,
+“100% fraud-proof” or “Flutterwave holds your money”. Say “payment secured under the deal rules”.
+
+## Code map
+
+| Path | What it does |
+|---|---|
+| `worker/src/core/` | Business rules: sellers & login codes, deals, orders & money, timers |
+| `worker/src/routes/` | API endpoints for the website, riders, admin and webhooks |
+| `worker/src/providers/` | Flutterwave, Monnify, Fez, Make.com and Google Sheets connections (+ simulated versions) |
+| `worker/src/lib/` | Money maths, Nigerian states, buyer rules, encryption, signed links, automatic database setup |
+| `worker/migrations/` | Database tables (item photos are stored in D1 too, in `deal_photos`) |
+| `worker/test/` | 79 tests: full journeys, race conditions, pricing, payouts, Monnify, Fez, Make.com and Sheets |
+| `worker/dashboard/worker.js` | The whole Worker in one file, to paste into Cloudflare's **Edit code** |
+| `docs/assets/js/core.js` | Shared website code: API calls, safe HTML, header/footer, image slots, private-link handling |
+| `docs/assets/js/analytics.js` | GA4 + Meta Pixel, cookie banner, automatic and funnel events, speed measurements |
+| `docs/assets/js/pages/` | One script per page |
+| `docs/assets/styles.css` | All styles (brand: navy `#0B1B3D`, white `#F4F7FC`, Roboto) |
+
+## Run it locally
+
+```bash
+cd worker && npm install && cp .dev.vars.example .dev.vars
+npm run db:migrate:local && npm run dev          # API → http://localhost:8787
+cd ../docs && python3 -m http.server 8080        # site → http://localhost:8080
 ```
 
-That's all you need to do. `assets/js/analytics.js` loads both tags and sends the events below. Leave an ID empty to switch that tag off.
-
-### Events sent
-
-| Step on the page | GA4 event | Meta Pixel event |
-|---|---|---|
-| Page opens | `page_view` (automatic), `view_item` | `PageView`, `ViewContent` |
-| Picks a bottle quantity | `select_item` | `CustomizeProduct` |
-| Opens the form (retail) | `begin_checkout` | `InitiateCheckout` |
-| Opens the form (distributor) | `begin_distributor_signup` | `DistributorSignupStart` (custom) |
-| Moves to the next form step | `form_step` | `FormStep` (custom) |
-| Submits a retail order | `generate_lead` | `Lead` |
-| Submits a distributor registration | `sign_up` + `generate_lead` | `CompleteRegistration` + `Lead` |
-| Sees the company account details | `view_payment_details` | `ViewPaymentDetails` (custom) |
-| Taps "Yes, I have made the payment" | `add_payment_info` + `payment_claimed` | `AddPaymentInfo` |
-| Taps "Send proof of payment on WhatsApp" | `whatsapp_click` | `Contact` |
-| Scrolls 25/50/75/100% | `scroll_depth` | — |
-| Reaches a section | `section_view` (section name) | `ViewDistributorSection` (custom, distributor only) |
-
-Every event carries the package name, number of bottles, value in **NGN** and, after submission, the order reference (RU-… or RD-…). The reference also goes to the Pixel as the `eventID`, so you can add the Conversions API later without double counting.
-
-### After adding the IDs
-
-1. **GA4 key events:** in GA4, go to **Admin → Events** and mark `generate_lead`, `payment_claimed` and `whatsapp_click` as key events. Events only appear there after they've fired once.
-2. **GA4 custom dimensions:** under **Admin → Custom definitions**, add event-scoped dimensions for `package`, `lead_type` and `funnel`, so you can break results down by package.
-3. **Meta ads:** optimise for **AddPaymentInfo** (people who say they've paid) once you have about 50 a week. Until then, use **Lead**. Don't use Purchase, because payments aren't verified automatically.
-4. **Meta domain:** in Business Settings, verify your domain under **Brand safety → Domains**. If you use a GitHub Pages address, verify the github.io subdomain or add a custom domain.
-5. **Test:** open your site with `?debug_tracking=1` at the end of the address, for example `https://ravella-ultra.github.io/?debug_tracking=1`. Every event is printed in the browser console and shows in **GA4 → Admin → DebugView**. For the Pixel, use **Test events** in Events Manager or the Meta Pixel Helper Chrome extension.
-
-### Using Google Tag Manager instead
-
-Every event is also pushed to `dataLayer` as `ru_<event>`, for example `ru_form_submit` and `ru_whatsapp_click`, with the same data. If you set up the tags in GTM, leave `ga4Id` and `metaPixelId` empty so nothing fires twice.
-
-UTM parameters, `gclid` and `fbclid` are still included in every Web3Forms email, so you can match each lead in your inbox to its ad.
-
-Nigeria's Data Protection Act expects visitors to be told about tracking. Add a short cookie notice or privacy page before you run ads at scale.
-
-## 4. AI search and SEO
-
-The page is set up so Google, Bing, ChatGPT, Perplexity, Claude and Gemini can read and quote it accurately:
-
-- **"At a glance" block:** a one-paragraph definition of the product and a facts table near the top. AI answers usually lift this kind of text.
-- **15 question-style FAQs** that match how people ask: "What is Ravella Ultra used for?", "How much is Ravella Ultra in Nigeria?" and so on. They're also marked up as `FAQPage` structured data.
-- **`Product` structured data** with ingredients, size, NAFDAC number, the price range and the 5 reviews.
-- **`llms.txt`:** a plain-text fact sheet for AI assistants.
-- **`robots.txt`:** explicitly allows the AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended and others).
-- **`sitemap.xml`**.
-
-After publishing:
-
-2. Add the site to **Google Search Console** and **Bing Webmaster Tools**, and submit `sitemap.xml` to both. Bing's index feeds ChatGPT search and Copilot.
-3. When prices change, update `config.js`, the "At a glance" table, the price FAQ, `llms.txt` and the "Page last updated" date together, so AI answers stay accurate.
-4. List the page on your Google Business Profile, Facebook page and Instagram bio. AI tools trust products that are mentioned consistently in several places.
-
-## Confirm before going live
-
-- **11 and 12 bottle prices:** these currently show "Ask us". Set `price` in `config.js`.
-- **Distributor package prices:** these differ from the prices on the package posters in the image pack.
-- **"No delivery fee" for distributors:** confirm this applies in every state.
-- **Testimonials:** all 5 testimonials from the official site are on the page. Keep written permission from each customer.
-- **Health claims:** the page uses traditional-use wording only. Disease claims (cancer, diabetes, stroke, fibroids and so on) are not on the page. NAFDAC's herbal advertising rules ban them, and the 'L' in A7-103154L means the product was assessed for safety, not efficacy.
-- **NAFDAC number and ingredient panel:** match these against the physical label.
+Add `?debug_tracking=1` to any page address to see every analytics event in the browser console.
+Test mode shows login codes on screen. Test data: NIN `11111111111` (born 1990-01-15) for
+"Adebayo Oluwaseun John"; bank accounts `0000000001`–`0000000005` (see the hint on each form).

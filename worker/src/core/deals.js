@@ -1,0 +1,299 @@
+import { first, all, insertStmt, updateStmt, stmt } from '../lib/db.js';
+import { parsePhotos, photoUrls } from '../lib/photos.js';
+import { checkSellerPromo } from './promo.js';
+import { availableFreeDeal, freeDealsLeft, refCode, FREE_DEAL_CODE } from './referrals.js';
+import { fillConsent } from '../lib/terms.js';
+import { randomToken } from '../lib/crypto.js';
+import { nairaToKobo, splitCharges, platformFee, processingFee, buyerPart, formatNaira, deliveryPrice, disputeFee } from '../lib/money.js';
+import { normaliseState } from '../lib/states.js';
+import { deliveryEstimate } from '../lib/eta.js';
+import { UserError, CONDITIONS, EXPIRY_OPTIONS, iso, addHours, str, requireLength, getDeal, getSeller } from './common.js';
+
+const PAYERS = ['buyer', 'seller', 'split'];
+
+// The fields that decide the price. Shared by the seller's "Calculate price" preview and link
+// creation, so the preview is always exactly what the link will charge.
+function pricingInput(ctx, input, seller) {
+  const itemPrice = nairaToKobo(input.item_price);
+  if (itemPrice == null || itemPrice < 500 * 100) throw new UserError('Price must be at least ₦500.');
+  const limit = dealLimit(ctx, seller);
+  if (itemPrice > limit) {
+    throw Object.assign(new UserError(`Deals above ${formatNaira(limit)} get a more secure link, set up with TrustGap support. Contact support with the item and the price, and we’ll arrange it with you.`), { code: 'needs_support', limit });
+  }
+  const pickupState = normaliseState(input.pickup_state);
+  if (!pickupState) throw new UserError('Enter the state you ship from (one of the 36 states or FCT).');
+  const deliveryState = normaliseState(input.delivery_state);
+  if (!deliveryState) throw new UserError("Enter the buyer's state (one of the 36 states or FCT).");
+  // Fez prices by whole kilograms.
+  const weightKg = Math.ceil(Number(input.weight_kg ?? 1));
+  if (!Number.isFinite(weightKg) || weightKg < 1 || weightKg > 100) throw new UserError('Parcel weight must be 1 to 100 kg.');
+  const deliveryPayer = str(input.delivery_payer);
+  const feePayer = str(input.fee_payer);
+  if (!PAYERS.includes(deliveryPayer)) throw new UserError('Choose who pays for delivery.');
+  if (!PAYERS.includes(feePayer)) throw new UserError('Choose who pays the TrustGap fee.');
+  return { itemPrice, pickupState, deliveryState, weightKg, deliveryPayer, feePayer };
+}
+
+// The largest item price this seller can put on a link themselves (the admin can raise it per seller).
+export const dealLimit = (ctx, seller) => Math.max(ctx.config.maxDealKobo, seller?.deal_limit || 0);
+
+// TrustGap's delivery price for a courier cost: the cost plus the handling margin. Your own riders'
+// prices (manual) are already your prices.
+export const ourDeliveryPrice = (ctx, courierKobo) =>
+  (ctx.logistics.name === 'manual' ? courierKobo : deliveryPrice(courierKobo, ctx.config.deliveryMargin));
+
+// Delivery price (courier cost from Fez /order/cost or the manual table, plus TrustGap's margin), the
+// TrustGap fee, and payment processing grossed up on the real total. With an early-access code there
+// is no TrustGap fee. Returns the price and, separately, the courier's cost (never shown to users).
+async function priceDeal(ctx, p, { promo = false } = {}) {
+  let courierCost;
+  try {
+    ({ feeKobo: courierCost } = await ctx.logistics.quote({ pickupState: p.pickupState, dropoffState: p.deliveryState, weightKg: p.weightKg }));
+  } catch (err) {
+    throw new UserError(`We couldn't get a delivery price right now (${err.message}). Please try again in a moment.`, 503);
+  }
+  const deliveryFee = ourDeliveryPrice(ctx, courierCost);
+  // If the buyer refuses a correct item, both delivery trips come out of their refund; the price
+  // has to be big enough for that to be covered by what they paid.
+  const minPrice = ctx.config.minPriceDeliveryMultiple * deliveryFee;
+  if (minPrice && p.itemPrice < minPrice) {
+    throw new UserError(`For delivery to ${p.deliveryState} (${formatNaira(deliveryFee)}), the item price must be at least ${formatNaira(minPrice)}: ${ctx.config.minPriceDeliveryMultiple === 2 ? 'twice' : `${ctx.config.minPriceDeliveryMultiple} times`} the delivery fee, so a return is always covered.`);
+  }
+  const pf = promo ? 0 : platformFee(p.itemPrice, ctx.config.fee);
+  const buyerShare = p.feePayer === 'buyer' ? 1 : p.feePayer === 'split' ? 0.5 : 0;
+  const pr = processingFee(
+    { itemPrice: p.itemPrice, buyerDelivery: buyerPart(p.deliveryPayer, deliveryFee), platform: pf, buyerShare },
+    ctx.config.processing,
+  );
+  const q = splitCharges({ itemPrice: p.itemPrice, deliveryFee, deliveryPayer: p.deliveryPayer, feePayer: p.feePayer, platformFee: pf, processingFee: pr });
+  if (q.sellerPayout <= 0) {
+    throw new UserError(`Delivery to ${p.deliveryState} plus fees is more than you would receive. Adjust the price or who pays.`);
+  }
+  return { q, courierCost };
+}
+
+// "Calculate price" on the seller's form.
+export async function previewDeal(ctx, input, seller) {
+  if (seller.suspended_at) throw new UserError('Your account is suspended, so you can’t create links. Contact TrustGap support.');
+  const p = pricingInput(ctx, input, seller);
+  const revising = input.replaces ? Number(input.replaces) : null;
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, revising);
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, revising);
+  const { q } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
+  const saving = platformFee(p.itemPrice, ctx.config.fee);
+  return {
+    pickup_state: p.pickupState,
+    delivery_state: p.deliveryState,
+    price: q,
+    dispute_fee: disputeFee(p.itemPrice, ctx.config.disputeFee),
+    eta: deliveryEstimate(ctx.config, ctx.now(), { pickup_state: p.pickupState, delivery_state: p.deliveryState, delivery_days: Number(input.delivery_days) || 2 }),
+    promo: promo ? { code: promo, saving } : free ? { code: FREE_DEAL_CODE, saving, free_deal: true, left: await freeDealsLeft(ctx, seller.id) } : null,
+    free_deals: await freeDealsLeft(ctx, seller.id),
+  };
+}
+
+// A free deal (from referrals) is used on the next link automatically, unless the seller unticks
+// "Use a free deal" (use_free_deal = 'no') or types an early-access code instead.
+async function useFreeDeal(ctx, seller, input, revising) {
+  if (input.use_free_deal === 'no' || input.use_free_deal === false) return null;
+  return availableFreeDeal(ctx, seller, revising);
+}
+
+export async function createDeal(ctx, seller, input) {
+  if (seller.suspended_at) throw new UserError('Your account is suspended. Contact support.');
+  if (!seller.payout_verified_at) throw new UserError('Add and verify your payout bank account before creating links.');
+  if (ctx.config.requireSellerId && !seller.identity_verified_at) {
+    throw new UserError('Verify your identity with your NIN before creating links.');
+  }
+  if (seller.amount_owed > 0) {
+    throw new UserError(`You owe ${formatNaira(seller.amount_owed)} from a past dispute. Settle it before creating new links.`);
+  }
+
+  const itemTitle = requireLength(input.item_title, 'Item name', 3, 120);
+  const itemDescription = requireLength(input.item_description, 'Description', 10, 1000);
+  const itemCondition = str(input.item_condition);
+  if (!CONDITIONS.includes(itemCondition)) throw new UserError('Choose the item condition.');
+  const quantity = Number(input.quantity || 1);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new UserError('Quantity must be 1 to 100.');
+  const pickupAddress = requireLength(input.pickup_address, 'Pickup address', 10, 300);
+  const deliveryAddress = requireLength(input.delivery_address, "Buyer's delivery address", 10, 300);
+  const deliveryLandmark = str(input.delivery_landmark).slice(0, 200);
+  const fragile = input.fragile === true || input.fragile === 'yes' || input.fragile === 'on';
+  const deliveryDays = Number(input.delivery_days || 2);
+  if (!Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 7) throw new UserError('Ship-within must be 1 to 7 days.');
+  const expiresHours = Number(input.expires_hours || 24);
+  if (!EXPIRY_OPTIONS.includes(expiresHours)) throw new UserError('Choose when the link expires.');
+  // Photos: new ones, or (when revising a link without adding new ones) the old link's photos.
+  const photos = await parsePhotos(input.photos);
+  const old = input.replaces ? await first(ctx.env, 'SELECT * FROM deals WHERE id = ? AND seller_id = ?', Number(input.replaces), seller.id) : null;
+  const replaced = old && old.status === 'open' ? old : null;
+  const copyPhotosFrom = !photos.length && replaced?.photo_count ? replaced : null;
+  const photoCount = photos.length || copyPhotosFrom?.photo_count || 0;
+  if (!photoCount) throw new UserError('Add at least one photo of the item, so the buyer can see what they are paying for.');
+  const p = pricingInput(ctx, input, seller);
+  const promo = await checkSellerPromo(ctx, seller, input.promo_code, replaced?.id ?? null);
+  const free = promo ? null : await useFreeDeal(ctx, seller, input, replaced?.id ?? null);
+  const { q, courierCost } = await priceDeal(ctx, p, { promo: Boolean(promo || free) });
+  const dFee = disputeFee(p.itemPrice, ctx.config.disputeFee);
+  // The seller confirms the item's condition in a pop-up, seeing what a false description costs them.
+  if (input.condition_confirmed !== true && input.condition_confirmed !== 'yes') {
+    throw new UserError('Confirm that the item is in good condition, exactly as agreed with the buyer.');
+  }
+
+  const now = ctx.now();
+  const token = randomToken(12);
+  const statements = [];
+  let replacesId = null;
+  if (replaced) {
+    replacesId = replaced.id;
+    statements.push(stmt(ctx.env, "UPDATE deals SET status = 'replaced' WHERE id = ? AND status = 'open'", replaced.id));
+  }
+  statements.push(
+    insertStmt(ctx.env, 'deals', {
+      token,
+      seller_id: seller.id,
+      replaces_deal_id: replacesId,
+      item_title: itemTitle,
+      item_description: itemDescription,
+      item_condition: itemCondition,
+      quantity,
+      item_price: p.itemPrice,
+      pickup_address: pickupAddress,
+      pickup_zone: p.pickupState, // legacy column, kept filled
+      pickup_state: p.pickupState,
+      weight_kg: p.weightKg,
+      fragile,
+      delivery_address: deliveryAddress,
+      delivery_landmark: deliveryLandmark || null,
+      delivery_state: p.deliveryState,
+      delivery_zone: p.deliveryState, // legacy column, kept filled
+      delivery_fee: q.deliveryFee,
+      courier_cost: courierCost,
+      dispute_fee: dFee,
+      delivery_payer: p.deliveryPayer,
+      fee_payer: p.feePayer,
+      platform_fee: q.platformFee,
+      processing_fee: q.processingFee,
+      buyer_total: q.buyerTotal,
+      seller_payout: q.sellerPayout,
+      delivery_days: deliveryDays,
+      inspection_hours: ctx.config.inspectionHours,
+      photo_count: photoCount,
+      promo_code: promo || (free ? FREE_DEAL_CODE : null),
+      fee_waived: promo || free ? platformFee(p.itemPrice, ctx.config.fee) : 0,
+      condition_confirmed_at: iso(now),
+      condition_pledge: fillConsent('seller', q.deliveryFee, dFee),
+      status: 'open',
+      expires_at: iso(addHours(now, expiresHours)),
+      created_at: iso(now),
+    }),
+    updateStmt(ctx.env, 'sellers', seller.id, { pickup_address: pickupAddress, pickup_state: p.pickupState }),
+    // The free deal now belongs to this link (it comes back if the link expires or is cancelled unpaid).
+    ...(free ? [stmt(ctx.env, 'UPDATE free_deals SET used_on_deal_id = (SELECT id FROM deals WHERE token = ?) WHERE id = ?', token, free.id)] : []),
+  );
+  // Same batch as the deal, so a link never exists without its photos.
+  const newDealId = '(SELECT id FROM deals WHERE token = ?)';
+  photos.forEach((ph, i) => statements.push(stmt(ctx.env,
+    `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at) VALUES (${newDealId}, ?, ?, ?, ?, ?, ?, ?)`,
+    token, i + 1, ph.mime, ph.data, ph.sha256, ph.bytes, ph.phash, iso(now))));
+  if (copyPhotosFrom) {
+    statements.push(stmt(ctx.env,
+      `INSERT INTO deal_photos (deal_id, position, mime, data, sha256, bytes, phash, created_at)
+       SELECT ${newDealId}, position, mime, data, sha256, bytes, phash, ? FROM deal_photos WHERE deal_id = ?`,
+      token, iso(now), copyPhotosFrom.id));
+  }
+  await ctx.env.DB.batch(statements);
+  return first(ctx.env, 'SELECT * FROM deals WHERE token = ?', token);
+}
+
+// Returns the deal with an up-to-date status, expiring it if its time has passed.
+export async function refreshDeal(ctx, deal) {
+  if (deal && deal.status === 'open' && new Date(deal.expires_at) <= ctx.now()) {
+    await stmt(ctx.env, "UPDATE deals SET status = 'expired' WHERE id = ? AND status = 'open'", deal.id).run();
+    return { ...deal, status: 'expired' };
+  }
+  return deal;
+}
+
+export async function cancelDeal(ctx, seller, dealId) {
+  const res = await stmt(ctx.env, "UPDATE deals SET status = 'cancelled' WHERE id = ? AND seller_id = ? AND status = 'open'", dealId, seller.id).run();
+  if (res.meta.changes !== 1) throw new UserError('Only an unpaid, open link can be cancelled.');
+}
+
+// The amounts saved with the link. Later fee or courier price changes never alter an existing link.
+export function priceBreakdown(deal) {
+  return splitCharges({
+    itemPrice: deal.item_price,
+    deliveryFee: deal.delivery_fee,
+    deliveryPayer: deal.delivery_payer,
+    feePayer: deal.fee_payer,
+    platformFee: deal.platform_fee,
+    processingFee: deal.processing_fee,
+  });
+}
+
+const photoRows = (ctx, deal) => all(ctx.env, 'SELECT position, sha256 FROM deal_photos WHERE deal_id = ? ORDER BY position', deal.id);
+
+/** Addresses of the deal's photos, in order. */
+export const dealPhotos = async (ctx, deal) => photoUrls(ctx, deal, await photoRows(ctx, deal));
+
+/** Fingerprints of the deal's photos, saved in the terms the buyer accepts. */
+export const dealPhotoHashes = async (ctx, deal) => (await photoRows(ctx, deal)).map((p) => p.sha256);
+
+// The seller's record on TrustGap, shown to buyers before they pay: facts only, counted from orders.
+// "Decided against" counts disputes TrustGap found the seller at fault for.
+export async function sellerHistoryFor(ctx, seller) {
+  const n = (sql) => first(ctx.env, sql, seller.id).then((r) => r.n);
+  return {
+    joined_at: seller.created_at,
+    links_created: await n('SELECT COUNT(*) n FROM deals WHERE seller_id = ?'),
+    paid_orders: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND paid_at IS NOT NULL AND status != 'duplicate_refunded'"),
+    completed: await n("SELECT COUNT(*) n FROM orders WHERE seller_id = ? AND status = 'completed'"),
+    disputes: await n('SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ?'),
+    decided_against: await n("SELECT COUNT(*) n FROM disputes d JOIN orders o ON o.id = d.order_id WHERE o.seller_id = ? AND d.fault = 'seller'"),
+    // A TrustGap Ambassador: brought in enough sellers who completed protected deals.
+    ambassador: ctx.config.referrals.on && (await n("SELECT COUNT(*) n FROM referrals WHERE referrer_id = ? AND status = 'rewarded'")) >= ctx.config.referrals.ambassadorAt,
+    // Their invite code, so buyers who also sell can join with it (first deals free).
+    invite_code: ctx.config.referrals.on ? await refCode(ctx, seller) : null,
+  };
+}
+
+// What the buyer may see: the whole deal, including the delivery address the seller entered (so
+// they can check it), but never the seller's pickup address or contact details.
+export async function publicDealView(ctx, deal) {
+  const seller = await getSeller(ctx, deal.seller_id);
+  const q = priceBreakdown(deal);
+  return {
+    token: deal.token,
+    // A suspended seller's open links show as paused (no payments) rather than open.
+    status: deal.status === 'open' && seller.suspended_at ? 'paused' : deal.status,
+    seller: { business_name: seller.business_name, identity_verified: Boolean(seller.identity_verified_at), history: await sellerHistoryFor(ctx, seller) },
+    item_title: deal.item_title,
+    item_description: deal.item_description,
+    item_condition: deal.item_condition,
+    quantity: deal.quantity,
+    photos: await dealPhotos(ctx, deal),
+    ships_from: deal.pickup_state,
+    delivery: { address: deal.delivery_address, landmark: deal.delivery_landmark, state: deal.delivery_state },
+    delivery_payer: deal.delivery_payer,
+    delivery_days: deal.delivery_days,
+    inspection_hours: deal.inspection_hours,
+    dispute_fee: deal.dispute_fee,
+    eta: deliveryEstimate(ctx.config, ctx.now(), deal),
+    expires_at: deal.expires_at,
+    fee_payer: deal.fee_payer,
+    promo_applied: Boolean(deal.promo_code),
+    promo_kind: deal.promo_code === FREE_DEAL_CODE ? 'free_deal' : deal.promo_code ? 'early_access' : null,
+    price: {
+      item: q.itemPrice,
+      delivery: q.buyerDelivery,
+      delivery_full: q.deliveryFee,
+      platform_fee: q.buyerPlatformShare,
+      platform_fee_full: q.platformFee,
+      processing_fee: q.buyerProcessingShare,
+      total: q.buyerTotal,
+    },
+  };
+}
+
+export { getDeal };
