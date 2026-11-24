@@ -5,8 +5,8 @@
    ========================================================== */
 window.RAVELLA = {
   // WhatsApp number in international format, digits only (no +, no spaces)
-  whatsapp: "2349075792074",
-  whatsappDisplay: "+234 907 579 2074",
+  whatsapp: "2348057025964",
+  whatsappDisplay: "+234 805 702 5964",
 
   // Paste your Web3Forms access key here (see README.md).
   // While this is empty the forms still work and hand off to WhatsApp,
@@ -33,14 +33,14 @@ window.RAVELLA = {
     { qty: 2,  price: 40000,  name: "Ruby Package" },
     { qty: 3,  price: 60000 },
     { qty: 4,  price: 80000,  name: "Heritage Package" },
-    { qty: 5,  price: 95000 },
-    { qty: 6,  price: 115000 },
-    { qty: 7,  price: 135000 },
-    { qty: 8,  price: 155000 },
-    { qty: 9,  price: 175000, name: "Prestige Package" },
+    { qty: 5,  price: 100000 },
+    { qty: 6,  price: 114000 },
+    { qty: 7,  price: 133000 },
+    { qty: 8,  price: 152000 },
+    { qty: 9,  price: 171000, name: "Prestige Package" },
     { qty: 10, price: 190000 },
-    { qty: 11, price: null },   // confirm price before showing
-    { qty: 12, price: null }    // confirm price before showing
+    { qty: 11, price: 209000 },   // confirm price before showing
+    { qty: 12, price: 228000 }    // confirm price before showing
   ],
 
   // Distributor packages (no PV / income figures shown on purpose)
